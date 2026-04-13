@@ -1,0 +1,66 @@
+close all
+clear all
+
+load data
+
+y=data;
+lags=2;
+T0=40;
+T0B=40;
+T0A=[2 3];
+T0H=4;
+kB=.01;
+kA=.1;
+kH=.01;
+M=600;
+N=200;
+
+% ---
+% minchul
+Yest = y(1:end-1,:);
+Yact = y(end,:);
+% ---
+
+r=tvsvar(Yest,lags,T0,T0B,T0A,T0H,kB,kA,kH,M);
+
+% int=10; % thinning parameter (choose 1 if want to use all draws for constructing 
+        % the final graphs; choose J if want to use one every J draws for 
+        % constructing the final graphs) 
+% NewGraphs;
+
+% ----
+% Primiceri and Del Negro
+% - I don't know why we put "-x" rather than "+x" in "tria(x)"
+% ----
+
+%% Forecast 
+
+% function for the forecasting
+
+% -------------
+% inputs
+
+% r is a structure with
+%     B: [153×21×600 double]
+%     V: [27×27×601 double]
+%     A: [153×3×601 double]
+%     H: [153×3×601 double]
+
+hmax = 8;
+info.lags = lags;
+rst = fcst_var_primiceri(r, hmax, Yest, Yact, Xcalest);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
