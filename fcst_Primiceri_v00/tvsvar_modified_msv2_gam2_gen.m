@@ -330,6 +330,10 @@ for sind = 1:M
 
         mat_rt(:,:,saveind) = rt_old;
         mat_PT(:,:,:,saveind) = Pt_old(:,:,end);
+
+        mat_PT_new(:,:,:,saveind) = Pt_old;
+
+
         mat_sig2r(saveind,:) = sig2r_old;
 
         mat_ht(:,:,saveind)  = ht_old;
@@ -345,7 +349,8 @@ r.B = mat_B;
 r.V = mat_V;
 
 r.r = mat_rt;
-r.P = mat_PT(:,:,end,:);
+%r.P = mat_PT(:,:,end,:);
+r.P = mat_PT_new;
 r.sig2r = mat_sig2r;
 
 r.h = mat_ht;
