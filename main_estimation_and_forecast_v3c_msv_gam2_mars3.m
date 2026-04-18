@@ -147,6 +147,7 @@ log_plike_rao_11_mean_vec = nan(n_t,1);
 %     ind_t
     % Pick a date
     t       = set_t(ind_t);
+    t= n_t;
         %% Sample selection
     Yest = Y(1:t,:);
     Xest = X(1:t,:);
@@ -270,9 +271,9 @@ log_plike_rao_11_mean_vec = nan(n_t,1);
         Yest = tmpYest;
         Yact = tmpYact;
 
-        lags=2;
-        T0=40;
-        T0B=40;
+        lags=info.p;
+        T0=info.T0;
+        T0B=info.T0;
 
         T0A = [2 3]; % 3-variable VAR (dim+1 is default prior)
 
@@ -287,19 +288,19 @@ log_plike_rao_11_mean_vec = nan(n_t,1);
 
         r =tvsvar_modified_msv2_gam2_gen(Yest,lags,T0,T0B,T0A,T0H,kB,kA,kH,M, nreport , info.nthin);
 
-        % other inputs
-        info.lags = lags;
-        info.nburns = N;
-
-        hmax = 8;
-        rp = fcst_var_primiceri_msv2_gen(r, hmax, Yest, Yact, [], info);
+        % % other inputs
+        % info.lags = lags;
+        % info.nburns = N;
+        % 
+        % hmax = 8;
+        % rp = fcst_var_primiceri_msv2_gen(r, hmax, Yest, Yact, [], info);
 
         %% Save
         strname = Xcalest(end,:);
         strname = strrep(strname{1},'/','-');
         savefilename = ['msv2_mars3_long_',num2str(var_ordering),'_pred_v',var_name, '_t_',strname, '.mat'];
         cd(info.savepath);
-        save(savefilename, 'rp' ,'r');
+        save(savefilename, 'r');
         cd(info.workpath);
 
   %=============================================================================

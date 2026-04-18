@@ -6,9 +6,9 @@ info = [];
 
 % --------------------------
 % MCMC SETTING
-info.ndraws  = 1000; % number of draws, in a typical application, most likely it needs to be >50000
-info.nburn   = 100;  %
-info.nthin   = 5;    % we store every {nthin} draws
+info.ndraws  = 100; % number of draws, in a typical application, most likely it needs to be >50000
+info.nburn   = 10;  %
+info.nthin   = 2;    % we store every {nthin} draws
 
 % info.ndraws  = 50000;
 % info.nburn   = 5000;
@@ -23,12 +23,12 @@ info.save_pred_dens = 0;
 
 % ----
 % VAR FORM
-info.p   = 2; % number of lags
+info.p   = 12; % number of lags
 info.nex = 1; % if a constant is included
 
 % ----
 % FORECASTING
-info.hmax = 8; % maximum forecast horizon
+info.hmax = 1; % maximum forecast horizon
 info.stfcst  = 1; % Impose stationarity when computing the forecast: 0 for unrestricted forecast
 
 
@@ -36,7 +36,7 @@ info.stfcst  = 1; % Impose stationarity when computing the forecast: 0 for unres
 % Dates are end-of-month trading days so exact match is unlikely;
 % the estimation function finds the nearest available date.
 % Data starts ~1984-05, so 1990 gives ~65 monthly obs of training data.
-info.eval_T0 = '1990-01-31'; %starting of evaluation period
+info.eval_T0 = '1984-05-31'; %starting of evaluation period
 info.eval_T1 = '2025-12-31'; %end of evaluation period
 
 % Primiceri
