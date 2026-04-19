@@ -11,13 +11,18 @@ if (nargin ~= 12); error('Wrong # of arguments'); end
 % =========================================================================
 % PRELIMINARY STEPS
 % putting the VAR in the form Y=ZB+e and adding the constant to the regressors
-x=[];
-for i=1:lags
-    x=[x lag(y,i)];
+if lags < 0 || lags ~= floor(lags)
+    error('lags must be a nonnegative integer');
 end
-x=[ones(length(x),1) x];
-x=x(lags+1:end,:);
-y=y(lags+1:end,:);
+
+nobs = size(y,1);
+x = ones(nobs,1);
+for i=1:lags
+    x = [x, lag(y,i)];
+end
+
+x = x(lags+1:end,:);
+y = y(lags+1:end,:);
 [T,n]=size(y);
 x0 =[x(1:T0,:)];
 x  =[x(T0+1:end,:)];
@@ -168,7 +173,17 @@ end
 %% Storage matrix
 
 saveind = 1;
-nsave = M/nthins;
+if nthins < 1 || nthins ~= floor(nthins)
+    error('nthins must be a positive integer');
+end
+
+% We save only on iterations where rem(sind, nthins) == 0, so the
+% storage size must match that exact count even when M is not divisible by nthins.
+nsave = floor(M / nthins);
+
+if nsave < 1
+    error('M and nthins imply zero saved draws; increase M or reduce nthins');
+end
 
 mat_ht = zeros(T, m, nsave);
 mat_lik = zeros(nsave,1);
@@ -183,6 +198,7 @@ mat_V=zeros(k,k,nsave); %V = var(errB)
 %% Actual run
 % GIBBS SAMPLING ALGORITHM
 time_all = tic;
+time_report = tic;
 
 i = [];
 for sind = 1:M
@@ -317,10 +333,18 @@ for sind = 1:M
     % Store matrices
     if rem(sind, nreport) == 0
 
-        disp(['sind = ', num2str(sind), ' / ', num2str(M)]);
+        elapsed_total = toc(time_all);
+        elapsed_report = toc(time_report);
+        remaining_draws = M - sind;
+        est_time_left = elapsed_report * remaining_draws / nreport;
 
-        time_per_draw = toc(time_all)/sind;
-        disp(['time per draw (sec.) = ', num2str(time_per_draw)]);
+        disp(['sind = ', num2str(sind), ' / ', num2str(M)]);
+        disp(['time per report (', num2str(nreport), ' draws, sec.) = ', num2str(elapsed_report)]);
+        disp(['elapsed total (sec.) = ', num2str(elapsed_total)]);
+        disp(['estimated time left (sec.) = ', num2str(est_time_left), ...
+            ' (~', num2str(est_time_left/60), ' min)']);
+
+        time_report = tic;
     end
 
     if rem(sind,nthins) == 0

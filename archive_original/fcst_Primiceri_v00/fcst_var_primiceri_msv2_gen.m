@@ -12,7 +12,9 @@ hmax = min(hmax, size(Yact,1));
 
 lags   = info.lags;
 
-nburns = info.nburns / info.nthin;
+% Saved draws occur every info.nthin iterations, so the number of saved
+% burn-in draws is the count of multiples of info.nthin up to info.nburns.
+nburns = floor(info.nburns / info.nthin);
 
 r.B = r.B(:,:,nburns+1:end);
 r.V = r.V(:,:,nburns+1:end);
@@ -120,7 +122,11 @@ for i_d = 1:nsave
             r0 = r1;
             H0 = H1;
             B0 = B1;
-            X1 = [1, Y1', X1(2:(end-n))]; % always include intercept
+            if lags > 0
+                X1 = [1, Y1', X1(2:(end-n))]; % always include intercept
+            else
+                X1 = 1;
+            end
 
             % Store
             Yfcst(hind,:,count) = Y1;

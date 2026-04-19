@@ -1,87 +1,102 @@
-# DSC-AC Model for MARS Portfolio Returns
+# RANDOMCORR — TVP-VAR with Dynamic Stochastic Correlation
 
-TVP-VAR with Dynamic Stochastic Correlation (DSC-AC) applied to MARS portfolio return data. The model is the random coefficient VAR from Arias, Rubio-Ramirez, and Shin (2023, *Journal of Econometrics*), adapted for financial portfolio returns.
+TVP-VAR with Dynamic Stochastic Correlation applied to MARS portfolio return data. The model is the random coefficient VAR from Arias, Rubio-Ramirez, and Shin (2023, *Journal of Econometrics*), adapted for financial portfolio returns.
 
 ## Model
 
-The DSC-AC model is a **Time-Varying Parameter VAR with Multivariate Stochastic Volatility** (TVP-VAR-MSV):
+The model is a **Time-Varying Parameter VAR with Multivariate Stochastic Volatility** (TVP-VAR-MSV):
 
-- **Random coefficients**: VAR coefficients B(t) follow a random walk: B(t) = B(t-1) + e(t)
+- **Random coefficients**: VAR coefficients B(t) follow a random walk
 - **Stochastic volatility**: Log-volatilities h(t) follow random walks with Cogley-Sargent priors
-- **Dynamic correlations**: Hansen's parameterization of the correlation matrix, with each element following a random walk
-- **Estimation**: MCMC via Elliptical Slice Sampling (generalized to work with any number of variables)
-
-## Data
-
-**`data_JRR.csv`** contains daily portfolio returns:
-
-| Column | Description |
-|--------|-------------|
-| `obs_date` | Trading date |
-| `mars_equities_portfolio` | Daily log-return, equities |
-| `mars_bonds_portfolio` | Daily log-return, bonds |
-| `mars_commodities_portfolio` | Daily log-return, commodities |
-| `mars_inflation_portfolio` | Daily log-return, inflation (available from ~2006 only) |
-
-The 3-variable model uses equities, bonds, and commodities (1984-05-04 to 2026-02-27, ~10,700 daily obs). Daily returns are aggregated to **monthly** frequency (~500 obs) before estimation, since the TVP-VAR-MSV model builds T x T covariance matrices internally.
+- **Dynamic correlations**: Hansen's parameterization — each correlation element follows a random walk
+- **Estimation**: MCMC via Elliptical Slice Sampling
 
 ## Quick Start
 
 ```matlab
-cd fcst_dcc_msv_var
-main_v3c_msv2_gam2_mars3
+main
 ```
 
-This runs the 3-variable model (equities, bonds, commodities) with default settings. Output is saved to `pred_v4_msv2_gam2_mars3/`.
+That is all. Everything is configured at the top of `main.m`.
+
+## Data
+
+**`data_JRR.csv`** — daily portfolio log-returns for three MARS strategies:
+
+| Column | Description |
+|--------|-------------|
+| `obs_date` | Trading date |
+| `mars_equities_portfolio` | Equities |
+| `mars_bonds_portfolio` | Bonds |
+| `mars_commodities_portfolio` | Commodities |
+
+Daily returns are summed within each period to produce the model frequency. The end date is always set automatically to the last available observation in the file.
 
 ## Configuration
 
-Edit `get_default_info_v3_msv2_gam2_mars3.m` to change:
+All settings live at the top of **`main.m`** — nothing else needs to be edited.
+
+### Frequency
+
+```matlab
+info.freq = 'monthly';   % ~500 obs — default, fast
+info.freq = 'weekly';    % ~2200 obs — slower; consider increasing info.T0
+```
+
+Switching frequency changes:
+- How daily returns are aggregated (monthly sum vs. weekly sum)
+- The output filename: `RANDOMCORR_monthly_YYYY-MM-DD.mat` or `RANDOMCORR_weekly_YYYY-MM-DD.mat`
+- The output PDF: `correlations_monthly.pdf` or `correlations_weekly.pdf`
+
+### Key Parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `ndraws` | 1000 | MCMC draws (use 50000+ for production) |
-| `nburn` | 100 | Burn-in draws |
-| `nthin` | 5 | Thinning interval |
-| `p` | 2 | VAR lags |
-| `hmax` | 8 | Forecast horizon (months) |
-| `eval_T0` | `'1990-01-31'` | Start of evaluation period |
-| `eval_T1` | `'2025-12-31'` | End of evaluation period |
-| `primiceri` | 3 | Model type (3 = Hansen's MSV2, the JE paper model) |
-| `T0` | 40 | Training sample size for prior |
+| `info.freq` | `'monthly'` | Data frequency: `'monthly'` or `'weekly'` |
+| `info.eval_T1` | `'9999-12-31'` | End of estimation window (sentinel = use all data) |
+| `info.p` | `0` | VAR lags |
+| `info.nex` | `1` | Include constant |
+| `info.T0` | `40` | Training sample length (periods, used for prior) |
+| `info.kB` | `0.01` | Prior scaling for VAR coefficients |
+| `info.ndraws` | `50` | MCMC draws (use 10000+ for production) |
+| `info.nburn` | `10` | Burn-in draws |
+| `info.nthin` | `1` | Thinning interval |
+| `info.nreport` | `2` | Report progress every N draws |
+
+## Outputs
+
+Each run produces two files in the project root:
+
+| File | Contents |
+|------|----------|
+| `RANDOMCORR_monthly_YYYY-MM-DD.mat` | MCMC draws: `r.B`, `r.V`, `r.r`, `r.P`, `r.h`, `r.sig2h`, `r.sig2r` |
+| `correlations_monthly.pdf` | Time-series plots of the three pairwise correlations (mean ± 1 std) |
+
+For weekly runs the filenames are `RANDOMCORR_weekly_...` and `correlations_weekly.pdf`. Old `.mat` files are deleted automatically before each run.
 
 ## File Structure
 
 ```
 DSC-AC-model/
-+-- data_JRR.csv                          # MARS portfolio data
-+-- README.md
-+-- fcst_dcc_msv_var/
-    +-- main_v3c_msv2_gam2_mars3.m        # Main runfile (3-var)
-    +-- main_estimation_and_forecast_v3c_msv_gam2_mars3.m  # Core estimation & forecast
-    +-- get_default_info_v3_msv2_gam2_mars3.m              # Hyperparameters & config
-    +-- compute_crps2.m                   # CRPS scoring
-    +-- fcst_Primiceri_v00/               # Estimation internals
-    |   +-- tvsvar_modified_msv2_gam2_gen.m   # MCMC sampler (generalized)
-    |   +-- fcst_var_primiceri_msv2_gen.m      # Forecast evaluation (generalized)
-    |   +-- kfilter.m, kback.m                # Kalman filter/smoother
-    |   +-- lag.m, trimr.m, make_varXY.m      # VAR utilities
-    |   +-- olsblock.m, ols1.m                # OLS helpers
-    |   +-- mvnrnd_modified.m                 # MVN random draws
-    |   +-- LogAbsDet.m, lognormpdf.m         # Math utilities
-    |   +-- tvsvar_modified.m                 # Original Primiceri (alt. model)
-    |   +-- fcst_var_primiceri.m              # Original Primiceri forecast
-    |   +-- step_sv*.m, tria*.m, cols.m       # Supporting functions
-    +-- toolbox_msv/                      # MSV toolbox
-    |   +-- loglike_yt_given_ht_Pt.m          # Likelihood (volatility)
-    |   +-- slice_sampling_v02.m              # Elliptical slice sampler
-    |   +-- LogAbsDet.m                       # Log absolute determinant
-    +-- toolbox_msv_corr/                 # Dynamic correlation toolbox
-        +-- loglike_yt_given_rt_ht.m          # Likelihood (correlation)
-        +-- veclAtoC.m                        # Vector to correlation matrix
-        +-- log_mvnpdf.m                      # Log MVN PDF
+├── main.m                          ← run this
+├── data_JRR.csv
+├── core/                           ← MCMC sampler and VAR utilities
+│   ├── tvsvar_modified_msv2_gam2_gen.m   MCMC sampler
+│   ├── kfilter.m, kback.m                Kalman filter / smoother
+│   ├── make_varXY.m, lag.m               VAR helpers
+│   ├── olsblock.m                        OLS
+│   ├── mvnrnd_modified.m                 MVN draws
+│   ├── LogAbsDet.m, lognormpdf.m         Math utilities
+├── toolbox/                        ← likelihoods, slice sampler, estimation
+│   ├── estimation_RANDOMCORR.m           Data loading, aggregation, MCMC call, save
+│   ├── loglike_yt_given_ht_Pt.m          Log-likelihood for volatility
+│   ├── loglike_yt_given_rt_ht.m          Log-likelihood for correlation
+│   ├── slice_sampling_v02.m              Elliptical slice sampler
+│   ├── veclAtoC.m                        Correlation vector → matrix (Hansen)
+│   ├── log_mvnpdf.m                      Log MVN PDF
+└── archive_original/               ← original code before refactor (for comparison)
 ```
 
-## References
+## Reference
 
-Arias, J. E., Rubio-Ramirez, J. F., & Shin, M. (2023). Macroeconomic forecasting and variable ordering in multivariate stochastic volatility models. *Journal of Econometrics*, 235(2), 1054-1086.
+Arias, J. E., Rubio-Ramirez, J. F., & Shin, M. (2023). Macroeconomic forecasting and variable ordering in multivariate stochastic volatility models. *Journal of Econometrics*, 235(2), 1054–1086.

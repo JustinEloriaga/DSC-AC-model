@@ -81,12 +81,4 @@ while (~valid)
 	
 end
 
-%%
-% tgrid = linspace(0,2*pi,100);
-% fval = zeros(100,1);
-% for i=1:1:100
-%     theta = tgrid(i);
-%     fval(i,1) = slice.fcn_lik(z_old*cos(theta) + v*sin(theta));
-% end
-
 

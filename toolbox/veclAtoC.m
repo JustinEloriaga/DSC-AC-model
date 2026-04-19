@@ -28,10 +28,6 @@ while (~finish)
     A(sel_diag) = x0;
     [Q,L] = eig(A, 'vector');
     eAx = Q*diag(exp(L))*Q';
-    
-
-%     [Q, L] = qdwheig(A);
-%     eAx = Q*diag(exp(diag(L)))*Q';
         
     diffx0 = log(diag(eAx));
     
@@ -52,9 +48,6 @@ end
 A(sel_diag) = x0;
 [Q,L] = eig(A, 'vector');
 eAx = Q*diag(exp(L))*Q';
-
-% [Q, L] = qdwheig(A);
-% eAx = Q*diag(exp(diag(L)))*Q';
 
 % clean-up for numerical reason
 C = real(eAx);
