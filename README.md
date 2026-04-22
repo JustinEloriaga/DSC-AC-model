@@ -40,19 +40,20 @@ All settings live at the top of **`main.m`** — nothing else needs to be edited
 
 ```matlab
 info.freq = 'monthly';   % ~500 obs — default, fast
-info.freq = 'weekly';    % ~2200 obs — slower; consider increasing info.T0
+info.freq = 'weekly';    % ~2200 obs — slower
+info.freq = 'daily';     % all available obs — slowest, uses raw daily returns with no aggregation
 ```
 
 Switching frequency changes:
-- How daily returns are aggregated (monthly sum vs. weekly sum)
-- The output filename: `RANDOMCORR_monthly_YYYY-MM-DD.mat` or `RANDOMCORR_weekly_YYYY-MM-DD.mat`
-- The output PDF: `correlations_monthly.pdf` or `correlations_weekly.pdf`
+- How daily returns are aggregated (monthly sum vs. weekly sum; daily = no aggregation)
+- The output filename: `RANDOMCORR_{freq}_YYYY-MM-DD.mat`
+- The output PDF: `correlations_{freq}.pdf`
 
 ### Key Parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `info.freq` | `'monthly'` | Data frequency: `'monthly'` or `'weekly'` |
+| `info.freq` | `'monthly'` | Data frequency: `'monthly'`, `'weekly'`, or `'daily'` |
 | `info.eval_T1` | `'9999-12-31'` | End of estimation window (sentinel = use all data) |
 | `info.p` | `0` | VAR lags |
 | `info.nex` | `1` | Include constant |

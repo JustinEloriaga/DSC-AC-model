@@ -17,8 +17,8 @@ info = [];
 info.workpath = workpath;
 info.datapath = workpath;
 
-% Data frequency: 'monthly' or 'weekly'
-info.freq = 'monthly';
+% Data frequency: 'monthly', 'weekly', or 'daily'
+info.freq = 'daily';
 
 % Evaluation window (eval_T1 = '9999-12-31' always uses last available date)
 info.eval_T1 = '9999-12-31';
@@ -66,7 +66,7 @@ else
     X_plus  = X_mean + X_std;
     X_minus = X_mean - X_std;
 
-    dates   = build_correlation_dates(fullfile(workpath, 'data.csv'), info.p, matfile, size(X, 3));
+    dates   = build_correlation_dates(fullfile(workpath, 'data.csv'), info.p, info.freq, matfile, size(X, 3));
     pdfpath = fullfile(workpath, pdfname);
 
     plot_correlation_series(dates, squeeze(X_mean(1,2,:)), squeeze(X_plus(1,2,:)), squeeze(X_minus(1,2,:)), 'Equity - Bonds');
@@ -82,22 +82,35 @@ end
 
 %% ---- Local functions ----
 
-function corr_dates = build_correlation_dates(datafile, p, matfile, n_obs)
+function corr_dates = build_correlation_dates(datafile, p, freq, matfile, n_obs)
 tmp         = readtable(datafile);
 dates_raw   = datetime(tmp.obs_date);
 data_raw    = [tmp.mars_equities_portfolio, tmp.mars_bonds_portfolio, tmp.mars_commodities_portfolio];
 valid_idx   = all(~isnan(data_raw), 2);
 dates_daily = dates_raw(valid_idx);
 
-ym = year(dates_daily) * 100 + month(dates_daily);
-[unique_ym, ~, ic] = unique(ym);
-
-month_end_dates = NaT(numel(unique_ym), 1);
-for mm = 1:numel(unique_ym)
-    month_dates         = dates_daily(ic == mm);
-    month_end_dates(mm) = month_dates(end);
+switch lower(freq)
+    case 'daily'
+        Xcal = dates_daily(p+1:end);
+    case 'weekly'
+        grp = year(dates_daily)*100 + week(dates_daily, 'weekofyear');
+        [unique_grp, ~, ic] = unique(grp);
+        period_end_dates = NaT(numel(unique_grp), 1);
+        for mm = 1:numel(unique_grp)
+            pd = dates_daily(ic == mm);
+            period_end_dates(mm) = pd(end);
+        end
+        Xcal = period_end_dates(p+1:end);
+    otherwise % monthly
+        grp = year(dates_daily)*100 + month(dates_daily);
+        [unique_grp, ~, ic] = unique(grp);
+        period_end_dates = NaT(numel(unique_grp), 1);
+        for mm = 1:numel(unique_grp)
+            pd = dates_daily(ic == mm);
+            period_end_dates(mm) = pd(end);
+        end
+        Xcal = period_end_dates(p+1:end);
 end
-Xcal = month_end_dates(p+1:end);
 
 tokens = regexp(matfile, '_(\d{4}-\d{2}-\d{2})\.mat$', 'tokens', 'once');
 if isempty(tokens)

@@ -26,8 +26,10 @@ switch lower(info.freq)
         grp = year(dates_daily)*100 + month(dates_daily);
     case 'weekly'
         grp = year(dates_daily)*100 + week(dates_daily, 'weekofyear');
+    case 'daily'
+        grp = (1:numel(dates_daily))';
     otherwise
-        error('info.freq must be ''monthly'' or ''weekly'' (got ''%s'')', info.freq);
+        error('info.freq must be ''monthly'', ''weekly'', or ''daily'' (got ''%s'')', info.freq);
 end
 
 [~, ~, ic] = unique(grp);
