@@ -35,10 +35,10 @@ info.nex = 1; % include constant
 info.kB  = 0.01; % prior scaling for VAR coefficients
 
 % MCMC
-info.ndraws  = 1000;
-info.nburn   = 100;
+info.ndraws  = 100;
+info.nburn   = 10;
 info.nthin   = 2;
-info.nreport = 100;
+info.nreport = 10;
 
 %% Estimation
 delete(fullfile(workpath, '*.mat'));
