@@ -10,9 +10,16 @@ catch
 end
 
 dates_raw = datetime(tmp.obs_date);
-data_raw  = [tmp.mars_equities_portfolio, ...
-             tmp.mars_bonds_portfolio, ...
-             tmp.mars_commodities_portfolio];
+if isfield(info, 'include_inflation') && info.include_inflation
+    data_raw = [tmp.mars_equities_portfolio, ...
+                tmp.mars_bonds_portfolio, ...
+                tmp.mars_commodities_portfolio, ...
+                tmp.mars_inflation_portfolio];
+else
+    data_raw = [tmp.mars_equities_portfolio, ...
+                tmp.mars_bonds_portfolio, ...
+                tmp.mars_commodities_portfolio];
+end
 
 valid_idx   = all(~isnan(data_raw), 2);
 data_daily  = data_raw(valid_idx, :);
@@ -51,7 +58,11 @@ disp('=== Data summary ===');
 disp(['  Freq    : ', info.freq]);
 disp(['  Obs     : ', num2str(n_periods), '  (', dcal{1}, ' to ', dcal{end}, ')']);
 disp(['  T0      : ', num2str(info.T0), ' periods (10% of sample)']);
-disp(['  Vars    : equities, bonds, commodities']);
+if isfield(info, 'include_inflation') && info.include_inflation
+    disp(['  Vars    : equities, bonds, commodities, inflation swaps']);
+else
+    disp(['  Vars    : equities, bonds, commodities']);
+end
 disp('====================');
 
 %% Build VAR matrices

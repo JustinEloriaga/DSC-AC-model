@@ -54,6 +54,7 @@ Switching frequency changes:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `info.freq` | `'monthly'` | Data frequency: `'monthly'`, `'weekly'`, or `'daily'` |
+| `info.include_inflation` | `false` | Add inflation swaps as 4th variable |
 | `info.eval_T1` | `'9999-12-31'` | End of estimation window (sentinel = use all data) |
 | `info.p` | `0` | VAR lags |
 | `info.nex` | `1` | Include constant |

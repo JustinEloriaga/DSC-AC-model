@@ -20,6 +20,9 @@ info.datapath = workpath;
 % Data frequency: 'monthly', 'weekly', or 'daily'
 info.freq = 'daily';
 
+% Include inflation swaps as 4th variable (true/false)
+info.include_inflation = false;
+
 % Evaluation window (eval_T1 = '9999-12-31' always uses last available date)
 info.eval_T1 = '9999-12-31';
 
@@ -66,7 +69,7 @@ else
     X_plus  = X_mean + X_std;
     X_minus = X_mean - X_std;
 
-    dates   = build_correlation_dates(fullfile(workpath, 'data.csv'), info.p, info.freq, matfile, size(X, 3));
+    dates   = build_correlation_dates(fullfile(workpath, 'data.csv'), info.p, info.freq, info.include_inflation, matfile, size(X, 3));
     pdfpath = fullfile(workpath, pdfname);
 
     plot_correlation_series(dates, squeeze(X_mean(1,2,:)), squeeze(X_plus(1,2,:)), squeeze(X_minus(1,2,:)), 'Equity - Bonds');
@@ -75,6 +78,14 @@ else
     exportgraphics(gcf, pdfpath, 'Append', true);
     plot_correlation_series(dates, squeeze(X_mean(2,3,:)), squeeze(X_plus(2,3,:)), squeeze(X_minus(2,3,:)), 'Bonds - Commodities');
     exportgraphics(gcf, pdfpath, 'Append', true);
+    if isfield(info, 'include_inflation') && info.include_inflation
+        plot_correlation_series(dates, squeeze(X_mean(1,4,:)), squeeze(X_plus(1,4,:)), squeeze(X_minus(1,4,:)), 'Equity - Inflation');
+        exportgraphics(gcf, pdfpath, 'Append', true);
+        plot_correlation_series(dates, squeeze(X_mean(2,4,:)), squeeze(X_plus(2,4,:)), squeeze(X_minus(2,4,:)), 'Bonds - Inflation');
+        exportgraphics(gcf, pdfpath, 'Append', true);
+        plot_correlation_series(dates, squeeze(X_mean(3,4,:)), squeeze(X_plus(3,4,:)), squeeze(X_minus(3,4,:)), 'Commodities - Inflation');
+        exportgraphics(gcf, pdfpath, 'Append', true);
+    end
 
     disp(['Plots saved to: ', pdfpath]);
     delete(fullfile(workpath, 'RANDOMCORR_*.mat'));
@@ -82,10 +93,14 @@ end
 
 %% ---- Local functions ----
 
-function corr_dates = build_correlation_dates(datafile, p, freq, matfile, n_obs)
+function corr_dates = build_correlation_dates(datafile, p, freq, include_inflation, matfile, n_obs)
 tmp         = readtable(datafile);
 dates_raw   = datetime(tmp.obs_date);
-data_raw    = [tmp.mars_equities_portfolio, tmp.mars_bonds_portfolio, tmp.mars_commodities_portfolio];
+if include_inflation
+    data_raw = [tmp.mars_equities_portfolio, tmp.mars_bonds_portfolio, tmp.mars_commodities_portfolio, tmp.mars_inflation_portfolio];
+else
+    data_raw = [tmp.mars_equities_portfolio, tmp.mars_bonds_portfolio, tmp.mars_commodities_portfolio];
+end
 valid_idx   = all(~isnan(data_raw), 2);
 dates_daily = dates_raw(valid_idx);
 
