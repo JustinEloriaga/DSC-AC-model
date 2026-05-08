@@ -18,10 +18,10 @@ info.workpath = workpath;
 info.datapath = workpath;
 
 % Data frequency: 'monthly', 'weekly', or 'daily'
-info.freq = 'daily';
+info.freq = 'monthly';
 
 % Include inflation swaps as 4th variable (true/false)
-info.include_inflation = false;
+info.include_inflation = true;
 
 % Evaluation window (eval_T1 = '9999-12-31' always uses last available date)
 info.eval_T1 = '9999-12-31';
@@ -35,10 +35,10 @@ info.nex = 1; % include constant
 info.kB  = 0.01; % prior scaling for VAR coefficients
 
 % MCMC
-info.ndraws  = 100;
-info.nburn   = 10;
-info.nthin   = 2;
-info.nreport = 10;
+info.ndraws  = 10000;    
+info.nburn   = 1000;
+info.nthin   = 3;
+info.nreport = 100;
 
 %% Estimation
 delete(fullfile(workpath, '*.mat'));
@@ -88,7 +88,7 @@ else
     end
 
     disp(['Plots saved to: ', pdfpath]);
-    delete(fullfile(workpath, 'RANDOMCORR_*.mat'));
+    %delete(fullfile(workpath, 'RANDOMCORR_*.mat'));
 end
 
 %% ---- Local functions ----

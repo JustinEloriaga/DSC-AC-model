@@ -30,8 +30,7 @@ switch(nargin)
 
 case 1
    n = 1; v = 0;
-   zt = ones(n,cols(x))*v;
-   z = [ zt; trimr(x,0,n)];
+   z = local_lag(x,n,v);
 
 case 2
    v = 0;
@@ -39,19 +38,29 @@ case 2
    z = [];
    return;
    end;
-   zt = ones(n,cols(x))*v;
-   z = [ zt; trimr(x,0,n)];
+   z = local_lag(x,n,v);
 
 case 3
    if n < 1
    z = [];
    return;
    end;
-   zt = ones(n,cols(x))*v;
-   z = [ zt; trimr(x,0,n)];
+   z = local_lag(x,n,v);
 
 otherwise
 error('lag: wrong # of input arguments');
 end;
+end
 
-  
+function z = local_lag(x,n,v)
+% Local replacement for legacy toolbox helpers cols() and trimr().
+nobs = size(x,1);
+ncol = size(x,2);
+zt   = ones(n,ncol) * v;
+
+if n >= nobs
+   z = zt(1:nobs,:);
+else
+   z = [zt; x(1:nobs-n,:)];
+end
+end
