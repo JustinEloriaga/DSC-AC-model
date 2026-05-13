@@ -1,9 +1,4 @@
-function [shatnew,signew]=kfilter(y,H,F,shat,sig,R,Q,cur_t)
-
-% for r02
-% to fix the bug in the original paper (Primiceri),"initial B(t) depends on
-% V as well; to update V correctly we need to take care of the initial
-% value as well";
+function [shatnew,signew]=kfilter(y,H,F,shat,sig,R,Q)
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % MODEL
@@ -12,17 +7,15 @@ function [shatnew,signew]=kfilter(y,H,F,shat,sig,R,Q,cur_t)
 % V(e(t))=R
 % V(v(t))=Q
 %
+% At t=1 the inputs (shat, sig) represent the prior on the previous
+% state (e.g. B_0), so sfor = F*shat = E[B_1|0] and
+% omega = F*sig*F' + Q = Var[B_1|0].
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-y=y(:); 
+y=y(:);
 
-% forecasting
-if cur_t == 1
-    sfor = shat;
-    omega = sig;
-else
-    sfor=F*shat;
-    omega=F*sig*F'+Q;
-end
+% forecasting (single branch, valid for all t)
+sfor  = F*shat;
+omega = F*sig*F' + Q;
 
 % updating
 sigma=H*omega*H'+R;

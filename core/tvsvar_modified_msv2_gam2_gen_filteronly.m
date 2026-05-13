@@ -1,6 +1,12 @@
-function r = tvsvar_modified_msv2_gam2_gen(y, lags, T0, kB, M, nreport, nthins)
+function r = tvsvar_modified_msv2_gam2_gen_filteronly(y, lags, T0, kB, M, nreport, nthins)
 % TVP-VAR with Hansen's MSV2 parameterization of the correlation matrix.
 % Generalized to any number of variables.
+%
+% FILTER-ONLY VARIANT: B_t is drawn directly from the filtered distribution
+% N(SHAT_t, SIG_t) at each t (i.e. p(B_t | y_{1:t})), without the backward
+% simulation smoother. The B draws are therefore independent across t
+% conditional on the filter output, instead of being a joint draw from
+% p(B_{1:T} | y_{1:T}).
 
 if nargin ~= 7; error('Wrong # of arguments'); end
 
@@ -135,22 +141,14 @@ saveind     = 1;
 
 for sind = 1:M
 
-    % --- Step 1: Draw B (Kalman filter + simulation smoother) ---
-    SHAT = zeros(T, k);
-    SIG  = zeros(T, k, k);
+    % --- Step 1: Draw B (Kalman filter only, no smoother) ---
+    % B_t is drawn from the filtered marginal N(SHAT_t, SIG_t) at each t.
     sig  = 4 * VBbar;
     shat = Bbar';
     for t = 1:T
-        OMEGA_t    = diag(exp(ht_old(t,:)/2)) * Pt_old(:,:,t) * diag(exp(ht_old(t,:)/2));
+        OMEGA_t     = diag(exp(ht_old(t,:)/2)) * Pt_old(:,:,t) * diag(exp(ht_old(t,:)/2));
         [shat, sig] = kfilter(y(t,:)', Z([0:n-1]*T+t,:), eye(k), shat, sig, OMEGA_t, squeeze(V_old(1:k,1:k)));
-        SHAT(t,:)   = shat';
-        SIG(t,:,:)  = sig;
-    end
-
-    B_old(T,:) = mvnrnd_modified(shat, sig/2+sig'/2, 1);
-    for t = T-1:-1:1
-        [btTp, StTp] = kback(SHAT(t,:), squeeze(SIG(t,:,:)), squeeze(B_old(t+1,:)), eye(k), squeeze(V_old(1:k,1:k)));
-        B_old(t,:)   = mvnrnd_modified(btTp, StTp/2+StTp'/2, 1);
+        B_old(t,:)  = mvnrnd_modified(shat, sig/2+sig'/2, 1);
     end
 
     % --- Step 2: Draw V ---
