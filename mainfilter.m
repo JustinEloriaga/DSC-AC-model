@@ -1,4 +1,5 @@
 % TVP-VAR with Hansen's MSV2 model — MARS portfolio data
+% FILTER-ONLY VARIANT (no backward smoother for B)
 % 3-variable VAR: [equities, bonds, commodities]
 
 %% Housekeeping
@@ -31,31 +32,32 @@ info.p   = 0; % number of lags
 info.nex = 1; % include constant
 
 % Prior
-% info.T0 is set automatically to 10% of sample inside estimation_RANDOMCORR
+% info.T0 is set automatically to 10% of sample inside estimation_RANDOMCORR_filter
 info.kB  = 0.01; % prior scaling for VAR coefficients
 
 % MCMC
-info.ndraws  = 100;    
-info.nburn   = 10;
+info.ndraws  = 10000;
+info.nburn   = 1000;
 info.nthin   = 3;
-info.nreport = 10;
+info.nreport = 100;
 
 %% Estimation
-delete(fullfile(workpath, '*.mat'));
+% Only delete prior FILTER outputs so the smoother run's mat is preserved
+delete(fullfile(workpath, 'RANDOMCORR_FILTER_*.mat'));
 
-disp('Starting estimation ...');
+disp('Starting filter-only estimation ...');
 tStart = tic;
-estimation_RANDOMCORR(info);
+estimation_RANDOMCORR_filter(info);
 tElapsed = toc(tStart);
 disp(['Done. Total time: ', num2str(tElapsed), ' sec']);
 
 %% Plot correlations and export PDF
-pdfname = ['correlations_', info.freq, '.pdf'];
+pdfname = ['correlations_filter_', info.freq, '.pdf'];
 if exist(fullfile(workpath, pdfname), 'file')
     delete(fullfile(workpath, pdfname));
 end
 
-mat_files = dir(fullfile(workpath, 'RANDOMCORR_*.mat'));
+mat_files = dir(fullfile(workpath, 'RANDOMCORR_FILTER_*.mat'));
 if isempty(mat_files)
     warning('No .mat result file found — skipping plots.');
 else
@@ -72,13 +74,13 @@ else
     dates   = build_correlation_dates(fullfile(workpath, 'data.csv'), info.p, info.freq, info.include_inflation, matfile, size(X, 3));
     pdfpath = fullfile(workpath, pdfname);
 
-    pairs = {[1,2], 'Equity - Bonds'; ...
-             [1,3], 'Equity - Commodities'; ...
-             [2,3], 'Bonds - Commodities'};
+    pairs = {[1,2], 'Equity - Bonds (filter-only)'; ...
+             [1,3], 'Equity - Commodities (filter-only)'; ...
+             [2,3], 'Bonds - Commodities (filter-only)'};
     if isfield(info, 'include_inflation') && info.include_inflation
-        pairs = [pairs; {[1,4], 'Equity - Inflation'; ...
-                         [2,4], 'Bonds - Inflation'; ...
-                         [3,4], 'Commodities - Inflation'}];
+        pairs = [pairs; {[1,4], 'Equity - Inflation (filter-only)'; ...
+                         [2,4], 'Bonds - Inflation (filter-only)'; ...
+                         [3,4], 'Commodities - Inflation (filter-only)'}];
     end
 
     n_pairs = size(pairs, 1);
@@ -101,7 +103,7 @@ else
     exportgraphics(fig, pdfpath);
 
     disp(['Plots saved to: ', pdfpath]);
-    %delete(fullfile(workpath, 'RANDOMCORR_*.mat'));
+    %delete(fullfile(workpath, 'RANDOMCORR_FILTER_*.mat'));
 end
 
 %% ---- Local functions ----
