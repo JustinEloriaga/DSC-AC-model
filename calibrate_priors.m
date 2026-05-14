@@ -1,25 +1,26 @@
-% Empirical calibration of the sig2h (log-variance random-walk innovation
-% variance) and sig2r (matrix-log-correlation random-walk innovation
-% variance) hyperparameters from the data at MONTHLY frequency.
+function calibrate_priors(projroot, include_inflation)
+% Empirical calibration of sig2h / sig2r prior means from MONTHLY data.
 %
 % Method:
 %   1. Aggregate daily MARS returns to monthly (matches estimation_RANDOMCORR).
 %   2. For each rolling window of `win` months, compute
 %        h_t = log(diag(Var(returns_window_t)))
 %        r_t = vech_lower(matrix-log(Corr(returns_window_t)))
-%   3. Take first differences; their sample variance is an estimate of the
-%      random-walk innovation variance.
-%   4. Report values and write calibrated_priors.mat.
+%   3. Take first differences; their sample variance estimates the random-walk
+%      innovation variance.
+%   4. Write calibrated_priors.mat (read by tvsvar_modified_msv2_gam2_gen).
 %
-% Output: calibrated_priors.mat with sig2h_prior_mean, sig2r_prior_mean.
+% Usage: calibrate_priors            % defaults: pwd, include_inflation=true
+%        calibrate_priors(projroot)
+%        calibrate_priors(projroot, include_inflation)
 
-clear variables; close all;
-projroot = pwd;
+if nargin < 1 || isempty(projroot);          projroot          = pwd;  end
+if nargin < 2 || isempty(include_inflation); include_inflation = true; end
+
 addpath(fullfile(projroot, 'core'));
 addpath(fullfile(projroot, 'toolbox'));
 
-include_inflation = true;     % match main.m
-windows           = [12 24 36];   % try several windows; default = middle
+windows = [12 24 36];   % rolling windows in months; recommendation uses middle
 
 %% Load daily returns, aggregate to monthly
 tmp = readtable(fullfile(projroot, 'data.csv'));
@@ -148,3 +149,4 @@ save(fullfile(projroot, 'calibrated_priors.mat'), ...
      'sig2h_prior_mean', 'sig2r_prior_mean', ...
      'results', 'chosen_window', 'include_inflation', 'var_names', 'pair_labels');
 fprintf('\nSaved calibrated_priors.mat\n');
+end

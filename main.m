@@ -39,7 +39,21 @@ info.ndraws  = 2000;    % draws PER CHAIN
 info.nburn   = 2000;    % burn-in PER CHAIN (clears slow sig2r transients)
 info.nthin   = 1;
 info.nreport = 200;
-info.nchains = 4;       % number of parallel chains (1 = serial; >1 uses parfor)
+info.nchains = 1;       % number of parallel chains (1 = serial; >1 uses parfor)
+
+%% Calibrate priors from data if needed (or if cached value is for a different m)
+calibfile  = fullfile(workpath, 'calibrated_priors.mat');
+need_calib = ~exist(calibfile, 'file');
+if ~need_calib
+    cached = load(calibfile, 'include_inflation');
+    if ~isfield(cached, 'include_inflation') || cached.include_inflation ~= info.include_inflation
+        need_calib = true;
+    end
+end
+if need_calib
+    disp('Running calibrate_priors ...');
+    calibrate_priors(workpath, info.include_inflation);
+end
 
 %% Estimation
 delete(fullfile(workpath, 'RANDOMCORR_*.mat'));
