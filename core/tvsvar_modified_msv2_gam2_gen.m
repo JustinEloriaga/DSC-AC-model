@@ -47,9 +47,24 @@ V_old(1:k, 1:k) = iwishmean(V0B, T0);
 % --- MSV setup ---
 m = n;
 
-% Prior for sig2h (Cogley-Sargent)
-prior_sig2h.T0 = ones(m,1) * (1/2);
-prior_sig2h.V0 = ones(m,1) * (0.01^2/2);
+% Load empirical calibration of sig2h, sig2r prior means if present;
+% otherwise fall back to literature defaults.
+calib_file = which('calibrated_priors.mat');
+if ~isempty(calib_file)
+    calib = load(calib_file, 'sig2h_prior_mean', 'sig2r_prior_mean');
+    sig2h_pm = calib.sig2h_prior_mean;
+    sig2r_pm = calib.sig2r_prior_mean;
+    fprintf('  Calibrated priors loaded: sig2h_pm=%.4g, sig2r_pm=%.4g\n', sig2h_pm, sig2r_pm);
+else
+    sig2h_pm = 0.01;
+    sig2r_pm = 0.005;
+    fprintf('  No calibration file; default priors: sig2h_pm=%.4g, sig2r_pm=%.4g\n', sig2h_pm, sig2r_pm);
+end
+T0_pseudo = 10;     % prior strength: ~10 pseudo-observations
+
+% Prior for sig2h: inverse-gamma with mean V0/(T0-1) = sig2h_pm
+prior_sig2h.T0 = ones(m,1) * T0_pseudo;
+prior_sig2h.V0 = ones(m,1) * sig2h_pm * (T0_pseudo - 1);
 
 % Prior for h(0)
 mh0       = zeros(m, 1);
@@ -83,13 +98,17 @@ for vvind = 2:n_r
     slice_mean_z_r     = cat(2, slice_mean_z_r, mr0(vvind)*ones(T,1));
 end
 
-% Prior for sig2r
-prior_sig2r.T0 = ones(n_r, 1) * 5;
-prior_sig2r.V0 = ones(n_r, 1) * (0.01 * 5);
+% Prior for sig2r: inverse-gamma with mean V0/(T0-1) = sig2r_pm
+prior_sig2r.T0 = ones(n_r, 1) * T0_pseudo;
+prior_sig2r.V0 = ones(n_r, 1) * sig2r_pm * (T0_pseudo - 1);
 
 %% Initialization
 yhat      = olsblock(y, x).resols;
-sig2h_old = var(yhat) / T;
+
+% Initialize sig2h, sig2r at their prior means (calibrated from data).
+% Avoids starting with the trivial var(yhat)/T values which were ~10-100x
+% too small and forced the slice sampler into a long warm-up drift.
+sig2h_old = sig2h_pm * ones(1, m);
 
 ht_old = zeros(T, m);
 for t = 1:T
@@ -99,7 +118,7 @@ end
 [temp_v1, temp_v2] = eig(corr(yhat), 'vector');
 temp_v3    = temp_v1 * diag(log(temp_v2)) * temp_v1';
 temp_r     = temp_v3(tril(ones(m), -1) == 1);
-sig2r_old  = abs(temp_r') / T;
+sig2r_old  = sig2r_pm * ones(1, n_r);
 
 rt_old = zeros(T, n_r);
 for t = 1:T

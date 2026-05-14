@@ -35,14 +35,14 @@ info.nex = 1; % include constant
 info.kB  = 0.01; % prior scaling for VAR coefficients
 
 % MCMC
-info.ndraws  = 1000;    % draws PER CHAIN
-info.nburn   = 10;      % burn-in PER CHAIN
-info.nthin   = 3;
-info.nreport = 100;
-info.nchains = 1;       % number of parallel chains (1 = serial; >1 uses parfor)
+info.ndraws  = 2000;    % draws PER CHAIN
+info.nburn   = 2000;    % burn-in PER CHAIN (clears slow sig2r transients)
+info.nthin   = 1;
+info.nreport = 200;
+info.nchains = 4;       % number of parallel chains (1 = serial; >1 uses parfor)
 
 %% Estimation
-delete(fullfile(workpath, '*.mat'));
+delete(fullfile(workpath, 'RANDOMCORR_*.mat'));
 
 disp('Starting estimation ...');
 tStart = tic;
