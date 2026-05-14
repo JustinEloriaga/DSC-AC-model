@@ -1,36 +1,40 @@
 function loglik = loglike_yt_given_rt_ht(yt,ht,rt,rrind,rt_prop)
-% for yt ~ N(0,exp(ht/2)*Pt*exp(ht/2))
+% for yt ~ N(0, diag(exp(ht/2)) * Pt(rt) * diag(exp(ht/2)))
+%
+% Optimized:
+%  - precompute sd = exp(ht/2) once outside the t-loop
+%  - build Sigma_t via outer product (sd_t' * sd_t) .* Pt_t
+%    (avoids two diagonal-matrix multiplications per t)
+%  - warm-start veclAtoC's fixed-point iteration across t (rt is a
+%    random walk so adjacent t solutions are close)
+%  - one batched log_mvnpdf call with 3D Sigma instead of T per-row calls
 
-
-% update hhind-th columen of ht with ht_prop
+% update rrind-th column of rt with rt_prop
 rt(:,rrind) = rt_prop;
 
 % size info
-% [m,~,T] = size(Pt);
-[T,m] = size(ht);
+[T, m] = size(ht);
 
-% from rt to Pt(correlation matrix)
-Pt = zeros(m,m,T);
-for t=1:T
-%     Pt(:,:,t) = veclAtoC_4v_mex(rt(t,:)); %4v works for 4 variables
-    Pt(:,:,t) = veclAtoC(rt(t,:));
+% precompute exp(ht/2) once
+sd = exp(ht/2);    % T x m
+
+% build Pt stack with warm-start across t (random-walk rt -> close adjacent solutions)
+Pt     = zeros(m, m, T);
+x0_wrm = [];
+for t = 1:T
+    [Pt(:,:,t), x0_wrm] = veclAtoC(rt(t,:), x0_wrm);
 end
 
-% log-lik
-loglik = 0;
-% loglik_t = zeros(T,1);
-MM = zeros(1,m);
-for t=1:T
-    VV = diag(exp(ht(t,:)/2))*Pt(:,:,t)*diag(exp(ht(t,:)/2));
-    VV = (VV + VV')/2;
-    
-    try
-        temp_loglik = log_mvnpdf(yt(t,:), MM, VV);
-        loglik = loglik + temp_loglik;
-    catch
-        disp('**** given_rt_ht, log_mvnpdf error ...');
-        loglik = -Inf;
-        return
-    end
-%     loglik_t(t) = temp_loglik;
+% vectorized Sigma(:,:,t) = (sd_t' * sd_t) .* Pt(:,:,t)
+sdcol = reshape(sd', m, 1, T);   % m x 1 x T
+sdrow = reshape(sd', 1, m, T);   % 1 x m x T
+Sigma = (sdcol .* sdrow) .* Pt;
+Sigma = (Sigma + permute(Sigma, [2 1 3])) / 2;
+
+% one batched log_mvnpdf call (uses 3D Sigma branch internally)
+try
+    loglik = sum(log_mvnpdf(yt, zeros(1, m), Sigma));
+catch
+    disp('**** given_rt_ht, log_mvnpdf error ...');
+    loglik = -Inf;
 end

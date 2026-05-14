@@ -35,10 +35,11 @@ info.nex = 1; % include constant
 info.kB  = 0.01; % prior scaling for VAR coefficients
 
 % MCMC
-info.ndraws  = 100;    
-info.nburn   = 10;
+info.ndraws  = 1000;    % draws PER CHAIN
+info.nburn   = 10;      % burn-in PER CHAIN
 info.nthin   = 3;
-info.nreport = 10;
+info.nreport = 100;
+info.nchains = 1;       % number of parallel chains (1 = serial; >1 uses parfor)
 
 %% Estimation
 delete(fullfile(workpath, '*.mat'));

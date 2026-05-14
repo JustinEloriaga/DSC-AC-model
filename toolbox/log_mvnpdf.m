@@ -176,17 +176,29 @@ elseif ndims(Sigma) == 3
             xRinv = X0./R;
             logSqrtDetSigma = sum(log(R),2);
         else
-            % Create array of standardized data, and vector of log(sqrt(det(Sigma)))
-            xRinv = zeros(n,d,'like',internal.stats.dominantType(X0,Sigma));
-            logSqrtDetSigma = zeros(n,1,'like',Sigma);
-            for i = 1:n
-                % Make sure Sigma is a valid covariance matrix
-                [R,err] = cholcov(Sigma(:,:,i),0);
-                if err ~= 0
-                    error(message('stats:mvnpdf:BadMatrixSigmaMultiple'));
+            % Vectorized: batched Cholesky + batched triangular solve over pages.
+            % Falls back to the per-page cholcov path if pagechol fails
+            % (Sigma not strictly SPD on some page).
+            try
+                R = pagechol(Sigma);                                 % d x d x n upper-triangular
+                X0p   = reshape(X0', 1, d, n);                       % 1 x d x n
+                xRp   = pagemrdivide(X0p, R);                        % 1 x d x n
+                xRinv = reshape(xRp, d, n)';                         % n x d
+                diag_mask = repmat(logical(eye(d)), [1 1 n]);
+                diagR = reshape(R(diag_mask), d, n);                 % d x n
+                logSqrtDetSigma = sum(log(diagR), 1)';               % n x 1
+            catch
+                % Per-page fallback (allows cholcov's SVD path for borderline-PSD pages)
+                xRinv = zeros(n,d,'like',internal.stats.dominantType(X0,Sigma));
+                logSqrtDetSigma = zeros(n,1,'like',Sigma);
+                for i = 1:n
+                    [R,err] = cholcov(Sigma(:,:,i),0);
+                    if err ~= 0
+                        error(message('stats:mvnpdf:BadMatrixSigmaMultiple'));
+                    end
+                    xRinv(i,:) = X0(i,:) / R;
+                    logSqrtDetSigma(i) = sum(log(diag(R)));
                 end
-                xRinv(i,:) = X0(i,:) / R;
-                logSqrtDetSigma(i) = sum(log(diag(R)));
             end
         end
     end

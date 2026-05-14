@@ -86,7 +86,23 @@ Xcalest = Xcal(info.T0+1:i1, :);
 
 %% Run MCMC
 M = info.ndraws + info.nburn;
-r = tvsvar_modified_msv2_gam2_gen(Yest, info.p, info.T0, info.kB, M, info.nreport, info.nthin);
+
+nchains = 1;
+if isfield(info, 'nchains') && ~isempty(info.nchains)
+    nchains = info.nchains;
+end
+
+if nchains > 1
+    seed_base = randi(2^31 - 2 - nchains);  % drawn under caller-set RNG
+    r_chains  = cell(nchains, 1);
+    parfor c = 1:nchains
+        rng(seed_base + c, 'twister');
+        r_chains{c} = tvsvar_modified_msv2_gam2_gen(Yest, info.p, info.T0, info.kB, M, info.nreport, info.nthin);
+    end
+    r = concat_chains(r_chains);
+else
+    r = tvsvar_modified_msv2_gam2_gen(Yest, info.p, info.T0, info.kB, M, info.nreport, info.nthin);
+end
 
 %% Save
 strname      = strrep(Xcalest{end}, '/', '-');
