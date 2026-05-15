@@ -106,7 +106,8 @@ end
 
 %% Save
 strname      = strrep(Xcalest{end}, '/', '-');
-savefilename = ['RANDOMCORR_', info.freq, '_', strname, '.mat'];
+runstamp     = char(datetime("now", "Format", "yyyyMMdd-HHmmss"));
+savefilename = ['RANDOMCORR_', info.freq, '_', strname, '_run-', runstamp, '.mat'];
 save(fullfile(info.workpath, savefilename), 'r');
 disp(['Saved: ', savefilename]);
 end

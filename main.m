@@ -65,10 +65,13 @@ tElapsed = toc(tStart);
 disp(['Done. Total time: ', num2str(tElapsed), ' sec']);
 
 %% Plot correlations and export PDF
-pdfname = ['correlations_', info.freq, '.pdf'];
-if exist(fullfile(workpath, pdfname), 'file')
-    delete(fullfile(workpath, pdfname));
+% Wipe any prior correlations_<freq>*.pdf (stamped or legacy) before writing the new one
+old_pdfs = dir(fullfile(workpath, ['correlations_', info.freq, '*.pdf']));
+for ip = 1:numel(old_pdfs)
+    delete(fullfile(workpath, old_pdfs(ip).name));
 end
+runstamp = char(datetime("now", "Format", "yyyyMMdd-HHmmss"));
+pdfname  = ['correlations_', info.freq, '_run-', runstamp, '.pdf'];
 
 mat_files = dir(fullfile(workpath, 'RANDOMCORR_*.mat'));
 if isempty(mat_files)
