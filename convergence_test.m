@@ -25,7 +25,7 @@ info.nex               = 1;
 info.kB                = 0.01;
 
 info.ndraws  = 1000;   % post burn-in
-info.nburn   = 1000;   % longer burn-in to clear the calibrated-prior transient
+info.nburn   = 2500;   % long burn-in to clear the worst sig2r transient
 info.nthin   = 1;      % NO thinning -- we want raw ACF
 info.nreport = 100;
 info.nchains = 1;      % single chain for this diagnostic

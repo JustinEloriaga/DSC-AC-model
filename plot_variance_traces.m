@@ -6,7 +6,7 @@ clear variables; close all;
 workpath = pwd;
 
 % Burn-in used inside convergence_test.m
-nburn = 1000;
+nburn = 2500;
 
 mat_files = dir(fullfile(workpath, 'RANDOMCORR_monthly_*.mat'));
 [~, latest_idx] = max([mat_files.datenum]);
