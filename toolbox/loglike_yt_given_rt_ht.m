@@ -18,11 +18,10 @@ rt(:,rrind) = rt_prop;
 % precompute exp(ht/2) once
 sd = exp(ht/2);    % T x m
 
-% build Pt stack with warm-start across t (random-walk rt -> close adjacent solutions)
-Pt     = zeros(m, m, T);
-x0_wrm = [];
+% build Pt stack
+Pt = zeros(m, m, T);
 for t = 1:T
-    [Pt(:,:,t), x0_wrm] = veclAtoC(rt(t,:), x0_wrm);
+    Pt(:,:,t) = veclAtoC(rt(t,:));
 end
 
 % vectorized Sigma(:,:,t) = (sd_t' * sd_t) .* Pt(:,:,t)

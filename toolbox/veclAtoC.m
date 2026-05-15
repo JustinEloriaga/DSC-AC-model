@@ -22,25 +22,19 @@ x0 = zeros(n,1);
 i=1;
 finish = false;
 while (~finish)
-    
-    
-%     A(eye(n)==1) = x0;
     A(sel_diag) = x0;
     [Q,L] = eig(A, 'vector');
     eAx = Q*diag(exp(L))*Q';
-        
+
     diffx0 = log(diag(eAx));
-    
     diffx0 = real(diffx0);
-    
+
     x0 = x0 - diffx0;
-    
-    %convergence
+
     if ( i > Kmax ) || (norm(diffx0)<tolX)
         finish = true;
     end
 
-    % update
     i = i + 1;
 end
 
@@ -53,5 +47,3 @@ eAx = Q*diag(exp(L))*Q';
 C = real(eAx);
 C(sel_diag) = 1;
 C = (C + C')/2;
-
-

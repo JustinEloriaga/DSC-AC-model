@@ -126,9 +126,8 @@ for t = 1:T
 end
 
 Pt_old = zeros(m, m, T);
-x0_wrm = [];
 for t = 1:T
-    [Pt_old(:,:,t), x0_wrm] = veclAtoC(rt_old(t,:), x0_wrm);
+    Pt_old(:,:,t) = veclAtoC(rt_old(t,:));
 end
 
 %% Storage
@@ -191,9 +190,8 @@ for sind = 1:M
         slice.fcn_lik    = @(rt_vvind) loglike_yt_given_rt_ht(et_old, ht_old, rt_old, vvind, rt_vvind);
         [rt_old(:,vvind), lik_old] = slice_sampling_v02(slice, rt_old(:,vvind), lik_old);
     end
-    x0_wrm = [];
     for t = 1:T
-        [Pt_old(:,:,t), x0_wrm] = veclAtoC(rt_old(t,:), x0_wrm);
+        Pt_old(:,:,t) = veclAtoC(rt_old(t,:));
     end
 
     % Draw sig2r
