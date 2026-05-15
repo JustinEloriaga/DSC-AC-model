@@ -144,9 +144,11 @@ fprintf('\nAlso initialize:\n');
 fprintf('  sig2h_old = %.4g * ones(1, m);\n', sig2h_prior_mean);
 fprintf('  sig2r_old = %.4g * ones(1, n_r);\n', sig2r_prior_mean);
 
-% Save for downstream consumption
-save(fullfile(projroot, 'calibrated_priors.mat'), ...
+% Save inside toolbox/ so it sits on the MATLAB path and is auto-loaded
+% by tvsvar_modified_msv2_gam2_gen via which('calibrated_priors.mat').
+out_path = fullfile(projroot, 'toolbox', 'calibrated_priors.mat');
+save(out_path, ...
      'sig2h_prior_mean', 'sig2r_prior_mean', ...
      'results', 'chosen_window', 'include_inflation', 'var_names', 'pair_labels');
-fprintf('\nSaved calibrated_priors.mat\n');
+fprintf('\nSaved %s\n', out_path);
 end

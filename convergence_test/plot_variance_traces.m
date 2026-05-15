@@ -3,14 +3,17 @@
 % with nthin = 1 and a leading info.nburn portion).
 
 clear variables; close all;
-workpath = pwd;
+
+% Project root = parent of this script's folder
+thisdir  = fileparts(mfilename('fullpath'));
+projroot = fileparts(thisdir);
 
 % Burn-in used inside convergence_test.m
 nburn = 2500;
 
-mat_files = dir(fullfile(workpath, 'RANDOMCORR_monthly_*.mat'));
+mat_files = dir(fullfile(projroot, 'RANDOMCORR_monthly_*.mat'));
 [~, latest_idx] = max([mat_files.datenum]);
-matfile = fullfile(workpath, mat_files(latest_idx).name);
+matfile = fullfile(projroot, mat_files(latest_idx).name);
 S = load(matfile, 'r'); r = S.r;
 
 mat_sig2h = r.sig2h(nburn+1:end, :);   % N x m
@@ -55,7 +58,7 @@ for i = 1:m
     title(['ACF: ', sig2h_labels{i}]); xlabel('Lag'); ylim([-0.3 1.05]);
 end
 sgtitle('Variance-of-log-volatility innovations: sig2h');
-exportgraphics(fig1, fullfile(workpath, 'traces_sig2h.pdf'));
+exportgraphics(fig1, fullfile(thisdir, 'traces_sig2h.pdf'));
 fprintf('Saved traces_sig2h.pdf\n');
 
 %% ===== Figure 2: sig2r (n_r rows) =====
@@ -72,7 +75,7 @@ for i = 1:n_r
     title(['ACF: ', pair_labels{i}]); xlabel('Lag'); ylim([-0.3 1.05]);
 end
 sgtitle('Variance-of-correlation-walk innovations: sig2r');
-exportgraphics(fig2, fullfile(workpath, 'traces_sig2r.pdf'));
+exportgraphics(fig2, fullfile(thisdir, 'traces_sig2r.pdf'));
 fprintf('Saved traces_sig2r.pdf\n');
 
 %% ===== Combined: all on one figure =====
@@ -104,7 +107,7 @@ for i = 1:n_r
     title(['ACF: ', pair_labels{i}]); xlabel('Lag'); ylim([-0.3 1.05]);
 end
 sgtitle('All variance hyperparameters');
-exportgraphics(fig3, fullfile(workpath, 'traces_sig2_all.pdf'));
+exportgraphics(fig3, fullfile(thisdir, 'traces_sig2_all.pdf'));
 fprintf('Saved traces_sig2_all.pdf\n');
 
 %% ---- local function ----

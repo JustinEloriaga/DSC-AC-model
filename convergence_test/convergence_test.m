@@ -7,16 +7,19 @@
 % and recommends per-chain `ndraws` and `nthin` for the multi-chain config.
 
 clc; clear variables; close all;
-workpath = pwd;
+
+% Project root = parent of this script's folder
+thisdir   = fileparts(mfilename('fullpath'));
+projroot  = fileparts(thisdir);
 rng('default'); rng(83);
 
-addpath([workpath, filesep, 'core']);
-addpath([workpath, filesep, 'toolbox']);
+addpath(fullfile(projroot, 'core'));
+addpath(fullfile(projroot, 'toolbox'));
 
 %% Configuration — single long chain, no thinning
 info = [];
-info.workpath          = workpath;
-info.datapath          = workpath;
+info.workpath          = projroot;       % estimation_RANDOMCORR writes RANDOMCORR_*.mat here
+info.datapath          = projroot;
 info.freq              = 'monthly';
 info.include_inflation = true;
 info.eval_T1           = '9999-12-31';
@@ -31,16 +34,16 @@ info.nreport = 100;
 info.nchains = 1;      % single chain for this diagnostic
 
 %% Run
-delete(fullfile(workpath, 'RANDOMCORR_monthly_*.mat'));
+delete(fullfile(projroot, 'RANDOMCORR_monthly_*.mat'));
 disp('Starting convergence-test chain ...');
 tStart = tic;
 estimation_RANDOMCORR(info);
 disp(['Elapsed: ', num2str(toc(tStart),'%.1f'), ' sec']);
 
 %% Load result
-mat_files = dir(fullfile(workpath, 'RANDOMCORR_monthly_*.mat'));
+mat_files = dir(fullfile(projroot, 'RANDOMCORR_monthly_*.mat'));
 [~, latest_idx] = max([mat_files.datenum]);
-matfile = fullfile(workpath, mat_files(latest_idx).name);
+matfile = fullfile(projroot, mat_files(latest_idx).name);
 S = load(matfile, 'r'); r = S.r;
 
 % Strip burn-in (mat_* arrays contain all M = ndraws + nburn draws since nthin=1)
@@ -193,5 +196,5 @@ for idx = 1:nplot
     title(['ACF: ', series_names{s}], 'Interpreter','none');
     xlabel('Lag'); ylim([-0.3 1.05]); grid on;
 end
-exportgraphics(fig, fullfile(workpath, 'convergence_diagnostics.pdf'));
+exportgraphics(fig, fullfile(thisdir, 'convergence_diagnostics.pdf'));
 fprintf('\nTrace+ACF plots saved to: convergence_diagnostics.pdf\n');

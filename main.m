@@ -42,7 +42,7 @@ info.nreport = 200;
 info.nchains = 1;       % number of parallel chains (1 = serial; >1 uses parfor)
 
 %% Calibrate priors from data if needed (or if cached value is for a different m)
-calibfile  = fullfile(workpath, 'calibrated_priors.mat');
+calibfile  = fullfile(workpath, 'toolbox', 'calibrated_priors.mat');
 need_calib = ~exist(calibfile, 'file');
 if ~need_calib
     cached = load(calibfile, 'include_inflation');
