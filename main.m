@@ -1,4 +1,4 @@
-% TVP-VAR with Hansen's MSV2 model — MARS portfolio data
+2% TVP-VAR with Hansen's MSV2 model — MARS portfolio data
 % 3-variable VAR: [equities, bonds, commodities]
 
 %% Housekeeping
