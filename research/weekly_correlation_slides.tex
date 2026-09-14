@@ -1,0 +1,100 @@
+\documentclass[aspectratio=169,11pt]{beamer}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern,booktabs,amsmath,graphicx}
+\definecolor{navy}{HTML}{17324D}\definecolor{teal}{HTML}{148C8A}
+\setbeamercolor{structure}{fg=navy}\setbeamercolor{frametitle}{fg=navy}
+\setbeamercolor{title}{fg=navy}\setbeamercolor{normal text}{fg=navy,bg=white}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}{\hfill\scriptsize Weekly correlations\hspace{4mm}\insertframenumber/\inserttotalframenumber\hspace{5mm}\vspace{3mm}}
+\setbeamersize{text margin left=9mm,text margin right=9mm}
+\setbeamerfont{frametitle}{size=\Large,series=\bfseries}
+\setbeamerfont{title}{size=\LARGE,series=\bfseries}
+\setbeamertemplate{itemize items}[circle]
+\newcommand{\source}{\par\vspace{1mm}{\tiny Source: supplied market levels; generated weekly-research outputs. Native quotes.}}
+\input{generated/metrics.tex}
+\title{Weekly correlations}
+\subtitle{Fourteen market variables, 2003--2026}
+\author{DSC--AC research workflow}
+\date{September 2026}
+\begin{document}
+\begin{frame}\titlepage\vspace{-3mm}\centering\small Descriptive results and a bounded MATLAB estimation pilot\end{frame}
+\begin{frame}{Research findings}
+\input{generated/slides_findings.tex}
+\vfill\small\textbf{Use:} historical comparison of the supplied returns. The current evidence does not establish trading performance or posterior convergence.
+\source
+\end{frame}
+\begin{frame}{Full-sample correlations}
+\centering\includegraphics[height=5.8cm]{generated/figures/full_correlation.pdf}\source
+\end{frame}
+\begin{frame}{Selected equity-index pairs}
+\centering\includegraphics[width=\linewidth]{generated/figures/equity_pairs.pdf}
+\small Weekly native-quote returns. Shorter windows respond faster and fluctuate more.\source
+\end{frame}
+\begin{frame}{Selected cross-market pairs}
+\centering\includegraphics[width=\linewidth]{generated/figures/cross_pairs.pdf}
+\small These are descriptive return correlations. Pair labels retain the supplied identifiers.\source
+\end{frame}
+\begin{frame}{Currency-pair correlations}
+\centering\includegraphics[width=\linewidth]{generated/figures/currency_pairs.pdf}
+\small USDJPY quotes yen per US dollar. EURUSD, GBPUSD and AUDUSD use US dollars per unit of the other currency. Quote direction affects correlation signs.\source
+\end{frame}
+\begin{frame}{Correlation sensitivity to the window}
+\input{generated/slides_windows.tex}
+\vspace{4mm}\small Overlapping windows make adjacent estimates dependent. The range of a rolling line does not measure estimation uncertainty.\source
+\end{frame}
+\begin{frame}{Weekly alignment and the 2019 closure}
+\begin{columns}[T]
+\column{.54\textwidth}\includegraphics[width=\linewidth]{generated/figures/endpoint_age.pdf}
+\column{.43\textwidth}\small
+\NumReturns{} returns across 14 series.\par\medskip
+Friday endpoints use past observations only, with a four-day age limit.\par\medskip
+One NKYTR endpoint is seven days old. The baseline flags the zero/catch-up returns. An optional sensitivity mask preserves all weeks.\par\medskip
+\tiny JPX, 15 January 2019 holiday notice. The unfinished final week is excluded.
+\end{columns}\source
+\end{frame}
+\begin{frame}{Stationarity and serial dependence}
+\input{generated/slides_stationarity.tex}
+\vfill\small ADF tests a unit-root null. KPSS tests a stationarity null. Neither test establishes a stable unconditional covariance.\source
+\end{frame}
+\begin{frame}{The joint Bayesian target}
+\begin{align*}
+y_t&=B_t+\varepsilon_t,\qquad\varepsilon_t\sim N(0,D_tP_tD_t),\\
+r_t&=\operatorname{vecl}(\log P_t),\qquad r_t=r_{t-1}+v_t.
+\end{align*}
+\begin{itemize}\item 14 time-varying means and 14 log variances.\item 91 correlation coordinates produce positive-definite matrices.\item Historical smoothing uses the entire sample.\item $p=0$ baseline. Serial dependence remains a production design issue.\end{itemize}
+\vfill\tiny Archakov and Hansen (2021). Actual entries of $P_t$, rather than matrix-log coordinates, are the reported correlations.
+\end{frame}
+\begin{frame}{Bounded sampler pilot}
+\input{generated/slides_pilot.tex}
+\vfill\small Pilot draws support numerical and timing checks only. They do not support posterior credible intervals or convergence claims.
+\end{frame}
+\begin{frame}{Production decision}
+\input{generated/slides_production.tex}
+\vspace{3mm}\begin{itemize}\item Four independent chains with rank-normalized $\widehat R<1.01$.\item Bulk and tail ESS of at least 400 for reported quantities.\item Review mean dynamics, prior-window sensitivity and closure treatment.\end{itemize}
+\vfill\tiny Vehtari et al. (2021). A separate decision is required before a multi-day production run.
+\end{frame}
+\appendix
+\begin{frame}{Technical appendix: priors and storage}
+\small
+First 104 returns calibrate initial priors, with 5\% covariance shrinkage. All observations remain in the likelihood.\par\medskip
+The 104-week rolling calibration sets inverse-gamma innovation priors with shape 10. Sensitivity windows are 52 and 156 weeks. Full-sample calibration reuses data.\par\medskip
+Cumulative-normal random-walk draws replace dense temporal factors exactly. Checkpoints preserve chain identity, RNG state, dates and the source hash.\par\medskip
+MAT-v7.3 chunks store distinct correlation entries. Per-chain burn-in exclusion occurs before summaries.
+\end{frame}
+\begin{frame}{Technical appendix: diagnostic detail}
+\input{generated/slides_diagnostics.tex}
+\end{frame}
+\begin{frame}{Sources and reproducible outputs}
+\small
+\begin{itemize}
+\item Supplied market data: 4 August 2003 onward, excluding USDCNH.
+\item Arias, Rubio-Ram\'irez and Shin (2023), dynamic stochastic-correlation models.
+\item Archakov and Hansen (2021), \emph{A New Parametrization of Correlation Matrices}.
+\item Murray, Adams and MacKay (2010), \emph{Elliptical Slice Sampling}.
+\item Vehtari et al. (2021), rank-normalized MCMC diagnostics.
+\item MathWorks, \texttt{adftest} and \texttt{kpsstest} documentation.
+\item Japan Exchange Group, 15 January 2019 holiday notice.
+\end{itemize}
+\vfill\small The companion report contains equations, complete citations and all 91 pairwise charts. CSV/MAT files and editable LaTeX sources accompany both PDFs.
+\end{frame}
+\end{document}

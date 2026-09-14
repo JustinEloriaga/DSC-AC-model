@@ -65,9 +65,9 @@ else
 end
 disp('====================');
 
-%% Build VAR matrices
-[~, Y] = make_varXY(data, info.p, info.nex);
-Xcal   = dcal(info.p+1:end, :);
+%% Keep the complete input here: the core constructs lags exactly once.
+Y      = data;
+Xcal   = dcal;
 
 %% Resolve end of estimation sample
 eval_T1 = info.eval_T1;
@@ -81,8 +81,11 @@ if isempty(i1)
     i1 = find(dates_num <= datenum(eval_T1, 'yyyy-mm-dd'), 1, 'last');
 end
 
+if isempty(i1) || i1 <= info.p + info.T0
+    error('Not enough observations for the requested lags and training sample.');
+end
 Yest    = Y(1:i1, :);
-Xcalest = Xcal(info.T0+1:i1, :);
+Xcalest = Xcal(info.p+info.T0+1:i1, :);
 
 %% Run MCMC
 M = info.ndraws + info.nburn;

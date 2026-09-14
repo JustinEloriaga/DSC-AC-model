@@ -1,0 +1,31 @@
+# Local agent configuration stays machine-local.
+/.agents/
+/.codex/
+
+# Transient Python, LaTeX build artifacts, and generated PDFs.
+.DS_Store
+__pycache__/
+*.py[cod]
+/tmp/
+/RANDOMCORR_*.mat
+/output/pdf/*.pdf
+/output/pdf/*.aux
+/output/pdf/*.bbl
+/output/pdf/*.blg
+/output/pdf/*.fdb_latexmk
+/output/pdf/*.fls
+/output/pdf/*.log
+/output/pdf/*.nav
+/output/pdf/*.out
+/output/pdf/*.snm
+/output/pdf/*.toc
+/research/generated/qa/
+/research/generated/.matplotlib/
+/research/generated/.cache/
+# Publication intermediates and copied figures are rebuilt from saved results.
+/research/generated/
+# Potentially large production draws remain local; pilot metadata is visible.
+/outputs/
+/outputs/weekly_research/runs/**/posterior_chunk_*.mat
+# Native acceleration is rebuilt locally for the installed MATLAB/platform.
+/toolbox/dsc_corr_batch_mex.mex*

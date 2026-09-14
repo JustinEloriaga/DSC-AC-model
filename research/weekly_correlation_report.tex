@@ -1,0 +1,157 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern,microtype,geometry,amsmath,amssymb,booktabs,longtable,graphicx,xcolor,enumitem,caption}
+\usepackage[section]{placeins}
+\usepackage[round,authoryear]{natbib}
+\usepackage[colorlinks=true,linkcolor=navy,citecolor=navy,urlcolor=navy]{hyperref}
+\definecolor{navy}{HTML}{17324D}
+\geometry{margin=23mm,headheight=14pt}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+\setlist{nosep,leftmargin=*}
+\captionsetup{font=small,labelfont=bf}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\vect}{\operatorname{vecl}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\Normal}{\mathcal{N}}
+\newcommand{\figsource}{Source: supplied market levels and generated weekly-research outputs. Native quotes; descriptive estimates.}
+\input{generated/metrics.tex}
+\begin{document}
+\pagenumbering{roman}
+\begin{titlepage}
+{\color{navy}\Large DSC--AC research series\par}
+\vspace{25mm}
+{\color{navy}\Huge\bfseries Weekly correlations\par}
+\vspace{5mm}
+{\Large Fourteen market variables, 2003--2026\par}
+\vspace{10mm}
+{\large Data validation, rolling estimates, and a Bayesian sampler run\par}
+\vspace{18mm}
+\begin{tabular}{@{}ll@{}}\toprule
+Return sample & \FirstReturn{} to \LastReturn{}\\
+Weekly observations & \NumReturns{}\\
+Series / distinct pairs & 14 / 91\\
+Currency basis & Native quotes as supplied\\
+Estimator status & Descriptive results plus a saved sampler run\\\bottomrule
+\end{tabular}
+\vfill
+\textbf{Reading guide.} The rolling correlations in this report are empirical estimates. The saved MATLAB run supplies the Bayesian path figures and computational measurements. Unless the reported diagnostics establish otherwise, its draws remain preliminary. Full-sample smoothing and empirical-Bayes calibration use future information relative to an individual historical week.
+\vspace{10mm}
+\par September 2026
+\end{titlepage}
+\pagenumbering{arabic}
+\section*{Executive summary}
+\addcontentsline{toc}{section}{Executive summary}
+\input{generated/executive.tex}
+\input{generated/pilot_executive.tex}
+{\small\setlength{\parskip}{0pt}\tableofcontents}
+\clearpage
+\section{Data and weekly alignment}
+The raw file contains levels, rather than daily returns. The weekly panel uses each series' last available observation on or before the Friday endpoint.
+\begin{equation}
+L_{jt}=P_j(s_{jt}),\qquad s_{jt}=\max\{s\leq f_t:P_j(s)\text{ is observed}\},\qquad
+y_{jt}=100\left[\log L_{jt}-\log L_{j,t-1}\right].
+\end{equation}
+Here $f_t$ is the Friday date. Endpoint age means how old the value is when placed in that Friday row: a Friday close has age 0, a Thursday close has age 1, and a Tuesday close has age 3. Routine cases may use a value up to four calendar days old. The single exception is NKYTR on 3 May 2019: Japanese markets were closed for the extended holiday around the imperial succession, so the Friday row uses the previous published level from 26 April, seven days earlier \citep{jpx2019}.
+
+The source starts on Monday 4 August 2003, so the first completed Friday level is 8 August 2003. A return needs two weekly levels; therefore the first return is from 8 August to 15 August 2003. The week ending 11 September 2026 is incomplete and excluded. The result has \NumLevels{} level dates and \NumReturns{} return dates.
+\section{Descriptive return results}
+All analyses below use percentage weekly log returns. Standard deviations are weekly, with no annualization. Series names follow the supplied labels, avoiding unverified instrument descriptions.
+\input{generated/descriptive_table.tex}
+\begin{figure}[htbp]\centering\includegraphics[width=.84\linewidth]{generated/figures/full_correlation.pdf}\caption{Full-sample Pearson correlations, \FirstReturn{}--\LastReturn{}. The baseline retains flagged as-of marks around the closure. \figsource}\end{figure}
+\section{Stationarity of weekly returns}
+\label{sec:stationarity}
+We test the 14 weekly return series $y_{jt}=100\Delta\log L_{jt}$. Table~\ref{tab:return-stationarity} reports augmented Dickey--Fuller (ADF) tests with a constant and BIC-selected lags from 0--13 \citep{mathworksadf}.
+\input{generated/return_adf_conclusion.tex}
+\par
+\begin{table}[htbp]
+\centering
+\caption{ADF unit-root tests for weekly returns.}
+\label{tab:return-stationarity}
+\input{generated/return_adf_table.tex}
+\begin{minipage}{\linewidth}\footnotesize
+Null: a unit root. Lag selection uses a common 1,190-observation regression sample; the full return panel remains available for estimation. The $p$-value bounds preserve MATLAB's tabulated limits. Source: saved \texttt{stationarity.csv}; method: \citet{mathworksadf}.
+\end{minipage}
+\end{table}
+\par\textbf{Conclusion.} The evidence supports treating the weekly returns as stationary for this analysis, without further differencing.
+\section{Joint Bayesian correlation model}
+The goal of the Bayesian model is to estimate a time series of correlations after accounting for each market's own mean and volatility. In each week, the model separates the return vector into three moving parts: expected returns, individual risk levels, and the correlation matrix linking the return innovations. The object of interest is the sequence of correlation matrices $P_t$, not the raw return correlations and not the sampler's internal coordinates.
+\subsection{Observation and state equations}
+The repository implements the dynamic stochastic-correlation approach associated with \citet{arias2023}. For $m=14$ and $q=m(m-1)/2=91$, retain its time-varying intercept specification, with no VAR lags ($p=0$):
+\begin{align}
+y_t &= B_t+\varepsilon_t,& \varepsilon_t&\sim\Normal(0,H_t),\\
+H_t &= D_tP_tD_t,&D_t&=\diag\{\exp(h_{1t}/2),\ldots,\exp(h_{mt}/2)\},\\
+B_t&=B_{t-1}+\eta_t,\quad t\geq2,&\eta_t&\sim\Normal(0,V),\\
+h_{jt}&=h_{j,t-1}+u_{jt},&u_{jt}&\sim\Normal(0,\sigma_{h,j}^2),\\
+r_{kt}&=r_{k,t-1}+v_{kt},&v_{kt}&\sim\Normal(0,\sigma_{r,k}^2).
+\end{align}
+The unrestricted vector $r_t=\vect(\log P_t)$ is the lower off-diagonal part of the matrix logarithm of the correlation matrix. Reconstruction follows \citet{archakov2021}. These coordinates are not correlations. Numerical outputs therefore store actual distinct entries of $P_t$, alongside the latent states needed for checkpointing. There are 119 time-varying scalar states per week: 14 means, 14 log variances, and 91 correlation coordinates.
+
+In the baseline dataset used here, all 14 return series are present for every one of the \NumReturns{} weeks, so the model uses the full 14-dimensional return vector each week:
+\begin{equation}
+y_t\mid B_t,h_t,r_t\sim\Normal\left(B_t,H_t\right).
+\end{equation}
+The Kalman filter and backward simulation smoother use this full weekly vector. Historical smoothing conditions on the full sample; a smoothed estimate at time $t$ is not a real-time estimate available at time $t$.
+\subsection{Prior definitions}
+\begin{align}
+B_1 &\sim \Normal(\bar B,4\bar V_B),
+& V &\sim \operatorname{IW}(V_{0B},\nu_B),\qquad B_1\perp V,\\
+\sigma_{h,j}^2 &\overset{\mathrm{ind}}{\sim}\operatorname{IG}(a_h,b_h),
+& h_{j0}\mid\sigma_{h,j}^2 &\sim\Normal(\bar h_j,10\sigma_{h,j}^2),
+\quad j=1,\ldots,m,\\
+\sigma_{r,k}^2 &\overset{\mathrm{ind}}{\sim}\operatorname{IG}(a_r,b_r),
+& r_{k0}\mid\sigma_{r,k}^2 &\sim\Normal(\bar r_k,10\sigma_{r,k}^2),
+\quad k=1,\ldots,q.
+\end{align}
+Here $m=14$, $q=91$, and $h_{j0},r_{k0}$ are pre-sample states. Prior blocks are independent; initial volatility and correlation states are conditionally independent given their innovation variances. Hyperparameter definitions and empirical-Bayes calibration are in Appendix~\ref{app:priors}.
+\section{MATLAB implementation and sampler run}
+\subsection{Changes relative to the repository's original workflow}
+The weekly workflow replaces the hard-coded four-series loader, the monthly assumptions, and fixed plotting labels with a common panel and explicit configuration. Calibration length is independent of likelihood sample length. Return construction happens once, using weekly endpoints; the old sum-of-returns aggregation is unsuitable for the supplied levels. The $p=0$ implementation avoids the previous double lag trimming and explicitly leaves a full VAR(1) outside this stage.
+
+Exact Gaussian random-walk simulation replaces dense $T\times T$ Cholesky factors by a cumulative sum of independent innovations plus the initial-state draw. Coordinate-wise elliptical slice sampling preserves the Gaussian prior while updating log-volatility and matrix-log correlation coordinates \citep{murray2010}. Reusable likelihood terms are cached. The Archakov-Hansen map converts proposed correlation coordinates into $P_t$; implementation safeguards only handle numerical reconstruction failures or non-finite likelihood values. Nonconvergent reconstruction is never silently accepted.
+
+Chain-specific files preserve input hash, dates, labels, configuration, random-number state, and checkpoints. Chunked MAT-v7.3 draw storage keeps distinct correlations rather than redundant symmetric matrices. Burn-in exclusion applies per chain; chains remain separate. Earlier runs are not deleted. The report identifies the exact saved run and records whether convergence has been established.
+\input{generated/pilot.tex}
+\input{generated/bayesian_paths.tex}
+\bibliographystyle{plainnat}
+\bibliography{references}
+\clearpage
+\appendix
+\section{Empirical-Bayes prior calibration}
+\label{app:priors}
+Let $N_0$ be the complete-row count among the first 104 weekly returns. Define the maximum-likelihood covariance $S_{\mathrm{ML}}$ and its five-percent diagonal shrinkage:
+\begin{equation}
+S_0=.95S_{\mathrm{ML}}+.05\diag(S_{\mathrm{ML}}),\quad
+\bar B=\bar y_0,\quad \bar V_B=S_0/N_0.
+\end{equation}
+The mean-state priors use
+\begin{equation}
+B_1\sim\Normal(\bar B,4\bar V_B),\qquad
+V\sim IW(V_{0B},\nu_B),\quad V_{0B}=N_0\bar V_B k_B^2,\quad\nu_B=N_0,\quad k_B=.01.
+\end{equation}
+The initial mean $B_1$ is independent of $V$, and mean-state innovations begin at $t=2$. The conditional inverse-Wishart update therefore uses the $T-1$ mean increments. Under this scale convention, the prior mean is $V_{0B}/(\nu_B-m-1)$, when it exists, and the mode is $V_{0B}/(\nu_B+m+1)$. These labels are distinct. Initial state means are $\bar h=\log\diag S_0$ for log variances and $\bar r=\vect(\log\operatorname{Corr}(S_0))$ for correlation coordinates.
+
+For each state family, rolling covariance estimates use 104-week windows and five-percent shrinkage. Differences of rolling log variances or matrix-log correlation coordinates estimate evolution variability. The common prior mean in each family is the median of the coordinate-specific difference variances. The inverse-gamma hyperparameters are $a_h=a_r=10$, $b_h=9\bar\sigma_h^2$, and $b_r=9\bar\sigma_r^2$, so $E[\sigma^2]=b/(a-1)=\bar\sigma^2$. The calibration also reports 52- and 156-week sensitivity.
+
+Conditional on its innovation variance, each volatility or correlation coordinate has a pre-sample state $z_0$ with variance $10\sigma^2$ and follows a Gaussian random walk. Its first observed-date state $z_1$ therefore has variance $11\sigma^2$. Accordingly,
+\begin{equation}
+\operatorname{Cov}(z_t,z_u)=\sigma^2\{10+\min(t,u)\},\qquad t,u=1,\ldots,T.
+\end{equation}
+No initial observations are removed from estimation: the first 104 returns inform the initial priors and also enter the likelihood. Full-sample rolling statistics inform the evolution priors. This empirical-Bayes reuse of the data simplifies calibration but can understate calibration uncertainty. It must be disclosed and assessed before interpreting production uncertainty bands.
+\input{generated/prior_sensitivity.tex}
+\clearpage
+\section{All 91 pairwise correlation paths}
+Each page shows trailing 52-week (navy) and 104-week (teal) Pearson estimates. The vertical scale is fixed at $[-1,1]$ across every panel. Labels show exact ticker abbreviations from the source, omitting only the common ``Index'' suffix for space. Canonical pair indices match the exported numerical data. \figsource
+\input{generated/all_pairs.tex}
+\clearpage
+\section{Complete stationarity diagnostics}
+\label{app:stationarity}
+The machine-readable output contains each statistic, lag, sample count, p-value bound, deterministic specification, and rejection decision. A reported boundary p-value is a bound from MATLAB's tabulated approximation, not an exact probability. The detailed listing preserves all tested specifications. The Transform column identifies log levels versus percentage weekly log returns. ARD means an ADF constant-only specification; TS adds a deterministic trend. For KPSS, Model ``level'' means the constant-mean stationarity null, even when Transform is ``return''. Reject refers to the test's own null: a unit root for ADF and stationarity for KPSS \citep{mathworksadf,mathworkskpss}. Table~\ref{tab:return-stationarity} presents the return ADF results in the main text.
+\input{generated/stationarity_findings.tex}
+The three return KPSS rejections alongside ADF unit-root rejection leave mean instability or breaks as possibilities to investigate. Unit-root rejection does not establish strict stationarity or constant second moments. All diagnostics retain the baseline as-of marks, including the flagged closure returns. Return KPSS uses all 1,204 observations; the common ADF lag comparison uses 1,190. Log-level KPSS and ADF use 1,205 and 1,191 observations, respectively.
+\subsection{What return dependence means for the model}
+\input{generated/dependence_findings.tex}
+\subsection{Full stationarity test listing}
+\input{generated/stationarity_full.tex}
+\end{document}
