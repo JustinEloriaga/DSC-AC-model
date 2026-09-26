@@ -18,6 +18,11 @@ arguments
     options.CorrelationThreads (1,1) double {mustBeInteger,mustBeGreaterThanOrEqual(options.CorrelationThreads,1),mustBeLessThanOrEqual(options.CorrelationThreads,64)} = 4
     options.SourceFile (1,1) string = ""
     options.OutputRoot (1,1) string = ""
+    options.EstimateParameters (1,1) logical = true
+    options.EstimationEndDate (1,1) string = ""
+    options.ParameterDirectory (1,1) string = ""
+    options.ParameterFile (1,1) string = ""
+    options.ParameterSmoothing (1,1) string {mustBeMember(options.ParameterSmoothing,["draws","mean"])} = "mean"
     options.RunTests (1,1) logical = true
     options.BuildReport (1,1) logical = true
     options.VerifyReport (1,1) logical = true
@@ -46,6 +51,11 @@ cfg.chain_id = options.ChainID;
 cfg.resume = false;
 cfg.correlation_backend = char(options.CorrelationBackend);
 cfg.correlation_threads = options.CorrelationThreads;
+cfg.estimate_parameters = options.EstimateParameters;
+cfg.estimation_end_date = char(options.EstimationEndDate);
+cfg.parameter_dir = char(options.ParameterDirectory);
+cfg.parameter_file = char(options.ParameterFile);
+cfg.parameter_smoothing = char(options.ParameterSmoothing);
 
 if options.RunTests
     run_weekly_acceptance(cfg);
@@ -65,7 +75,7 @@ run_manifest.requested_max_hours = options.MaxHours;
 run_manifest.convergence_established = false;
 write_json_local(fullfile(run_dir,'run_manifest.json'),run_manifest);
 
-result = dsc_sample(analysis.panel,analysis.priors,cfg,run_dir);
+result = dsc_run_inference(analysis.panel,analysis.priors,cfg,run_dir,analysis.inference);
 if result.saved_draws < 2
     error('DSC:TooFewRetainedDraws', ...
         ['The run was preserved at %s, but it retained only %d draw(s). ' ...
@@ -107,6 +117,7 @@ latest = struct('run_dir',run_dir,'summary',fullfile(run_dir,'pilot_summary.json
     'requested_retained_draws',options.RetainedDraws,'actual_retained_draws',result.saved_draws, ...
     'warmup_iterations',cfg.burnin,'thin',cfg.thin,'completed_iterations',result.completed_iterations, ...
     'status',result.status,'created_at',char(datetime('now','Format','yyyy-MM-dd''T''HH:mm:ss')));
+latest.inference=result.inference;
 write_json_local(fullfile(cfg.output_root,'latest_model_report.json'),latest);
 end
 

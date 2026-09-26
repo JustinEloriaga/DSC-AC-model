@@ -9,6 +9,10 @@ mask=logical(panel.observation_mask)&isfinite(Y);
 if numel(panel.dates)~=T||any(diff(panel.dates)<=seconds(0))
     error('dsc:PanelDates','Dates must increase strictly and match returns.');
 end
+if isfield(priors,'likelihood_start_date')&& ...
+        (isempty(panel.dates)||panel.dates(1)~=priors.likelihood_start_date)
+    error('dsc:CalibrationOverlap','The model sample must start after the reserved initial-prior calibration weeks.');
+end
 if any(~isfinite(Y(logical(panel.observation_mask))))
     error('dsc:ObservedNaN','Observed returns must be finite.');
 end
@@ -17,6 +21,34 @@ if ~isequal(priors.tickers,panel.tickers)||~isequal(priors.source_hash,panel.sou
 end
 if ~isfield(cfg,'chain_id'), cfg.chain_id=1; end
 if ~isfield(cfg,'resume'), cfg.resume=false; end
+if ~isfield(cfg,'estimate_parameters'), cfg.estimate_parameters=true; end
+if ~isfield(cfg,'parameter_smoothing')||strlength(string(cfg.parameter_smoothing))==0
+    cfg.parameter_smoothing='mean';
+end
+cfg.parameter_smoothing=validatestring(cfg.parameter_smoothing,{'draws','mean'});
+if ~isscalar(cfg.estimate_parameters)|| ...
+        ~(islogical(cfg.estimate_parameters)||isnumeric(cfg.estimate_parameters))|| ...
+        ~isreal(cfg.estimate_parameters)||~ismember(cfg.estimate_parameters,[0 1])
+    error('dsc:SamplerConfig','estimate_parameters must be true or false.');
+end
+cfg.estimate_parameters=logical(cfg.estimate_parameters);
+if cfg.estimate_parameters
+    inference_mode='parameter_estimation';
+else
+    inference_mode='fixed_parameter_smoothing';
+    if strcmp(cfg.parameter_smoothing,'draws')
+        if ~isfield(cfg,'fixed_parameter_draws')
+            error('dsc:FixedParameters','Draw-based smoothing requires fixed_parameter_draws.V, sig2h and sig2r.');
+        end
+        cfg.fixed_parameter_draws=validate_parameter_draws(cfg.fixed_parameter_draws,m,nr);
+        cfg.fixed_parameters=parameter_draw_at(cfg.fixed_parameter_draws,1);
+    else
+        if ~isfield(cfg,'fixed_parameters')
+            error('dsc:FixedParameters','Mean-based smoothing requires fixed_parameters.V, sig2h and sig2r.');
+        end
+        cfg.fixed_parameters=validate_fixed_parameters(cfg.fixed_parameters,m,nr);
+    end
+end
 if ~isfield(cfg,'correlation_backend'), cfg.correlation_backend='matlab'; end
 if ~isfield(cfg,'correlation_threads'), cfg.correlation_threads=1; end
 if ~isscalar(cfg.correlation_threads)||~isfinite(cfg.correlation_threads)|| ...
@@ -59,13 +91,15 @@ end
 timing=struct('mean',0,'mean_variance',0,'correlation',0,'correlation_variance',0, ...
     'volatility',0,'volatility_variance',0,'checkpoint',0);
 empty_buffer=struct('P_pairs',zeros(T,nr,0),'h',zeros(T,m,0), ...
-    'B',zeros(T,m,0),'iterations',zeros(1,0));
+    'B',zeros(T,m,0),'V',zeros(m,m,0),'sig2h',zeros(0,m), ...
+    'sig2r',zeros(0,nr),'iterations',zeros(1,0));
 if cfg.resume
     if ~exist(checkpoint_path,'file'), error('dsc:ResumeMissing','Checkpoint does not exist.'); end
     loaded=load(checkpoint_path,'checkpoint'); cp=loaded.checkpoint;
     if ~isequaln(cp.identity,identity), error('dsc:ResumeMismatch','Panel, priors or fixed configuration differs.'); end
     state=cp.state; rng(cp.rng); completed=cp.completed; saved=cp.saved;
     next_chunk=cp.next_chunk; buffer=cp.buffer; diagnostics=cp.diagnostics;
+    parameter_sums=cp.parameter_sums;
     timing=cp.timing; previous_seconds=cp.total_seconds;
 else
     if exist(checkpoint_path,'file')||~isempty(dir(fullfile(run_dir,'posterior_chunk_*.mat')))
@@ -73,12 +107,20 @@ else
     end
     rng(cfg.seed+cfg.chain_id-1,'twister');
     state.B=repmat(priors.Bbar',T,1);
-    state.V=priors.V0B/(priors.nuB-m-1);
     state.h=repmat(priors.mh0',T,1);
     state.r=repmat(priors.mr0',T,1);
-    state.sig2h=priors.sig2h_mean*ones(1,m);
-    state.sig2r=priors.sig2r_mean*ones(1,nr);
+    if cfg.estimate_parameters
+        state.V=priors.V0B/(priors.nuB-m-1);
+        state.sig2h=priors.sig2h_mean*ones(1,m);
+        state.sig2r=priors.sig2r_mean*ones(1,nr);
+    else
+        state.V=cfg.fixed_parameters.V;
+        state.sig2h=cfg.fixed_parameters.sig2h;
+        state.sig2r=cfg.fixed_parameters.sig2r;
+    end
     completed=0; saved=0; next_chunk=1; buffer=empty_buffer;
+    parameter_sums=struct('V',zeros(m,m),'sig2h',zeros(1,m), ...
+        'sig2r',zeros(1,nr),'count',0);
     diagnostics=struct('iteration',zeros(0,1),'sig2h',zeros(0,m), ...
         'sig2r',zeros(0,nr),'V_diag',zeros(0,m),'loglik',zeros(0,1), ...
         'r_proposals',zeros(0,1),'h_proposals',zeros(0,1), ...
@@ -101,11 +143,16 @@ while completed<cfg.max_iterations
     stage_name='mean';
     try
         check_time(); stage=tic;
+        if ~cfg.estimate_parameters && strcmp(cfg.parameter_smoothing,'draws')
+            state=apply_parameter_draw(state,cfg.fixed_parameter_draws,completed+1);
+        end
         state.B=draw_mean(Y,obs,state.h,cache,state.V,priors,@check_time);
         timing.mean=timing.mean+toc(stage);
-        stage_name='mean_variance'; stage=tic; err=diff(state.B,1,1); scale=err'*err+priors.V0B;
-        state.V=iwishrnd((scale+scale')/2,T-1+priors.nuB);
-        timing.mean_variance=timing.mean_variance+toc(stage);
+        if cfg.estimate_parameters
+            stage_name='mean_variance'; stage=tic; err=diff(state.B,1,1); scale=err'*err+priors.V0B;
+            state.V=iwishrnd((scale+scale')/2,T-1+priors.nuB);
+            timing.mean_variance=timing.mean_variance+toc(stage);
+        end
         residual=Y-state.B;
         stage_name='correlation'; stage=tic; ll=cached_likelihood(residual,state.h,cache,obs);
         % E and h stay fixed throughout all correlation-coordinate updates.
@@ -123,10 +170,12 @@ while completed<cfg.max_iterations
         end
         cache_new=build_cache(state.r,obs,m,cfg.correlation_backend,mask,cfg.correlation_threads,@check_time);
         timing.correlation=timing.correlation+toc(stage);
-        stage_name='correlation_variance'; stage=tic;
-        state.sig2r=draw_variances(state.r,state.sig2r,priors.mr0, ...
-            priors.r0_scale,priors.ig_shape,priors.ig_scale_r);
-        timing.correlation_variance=timing.correlation_variance+toc(stage);
+        if cfg.estimate_parameters
+            stage_name='correlation_variance'; stage=tic;
+            state.sig2r=draw_variances(state.r,state.sig2r,priors.mr0, ...
+                priors.r0_scale,priors.ig_shape,priors.ig_scale_r);
+            timing.correlation_variance=timing.correlation_variance+toc(stage);
+        end
         stage_name='volatility'; stage=tic; ll=cached_likelihood(residual,state.h,cache_new,obs); h_proposals=0; h_invalid=0;
         for j=1:m
             check_time();
@@ -136,10 +185,12 @@ while completed<cfg.max_iterations
             h_proposals=h_proposals+ntry; h_invalid=h_invalid+ninvalid;
         end
         timing.volatility=timing.volatility+toc(stage);
-        stage_name='volatility_variance'; stage=tic;
-        state.sig2h=draw_variances(state.h,state.sig2h,priors.mh0, ...
-            priors.h0_scale,priors.ig_shape,priors.ig_scale_h);
-        timing.volatility_variance=timing.volatility_variance+toc(stage);
+        if cfg.estimate_parameters
+            stage_name='volatility_variance'; stage=tic;
+            state.sig2h=draw_variances(state.h,state.sig2h,priors.mh0, ...
+                priors.h0_scale,priors.ig_shape,priors.ig_scale_h);
+            timing.volatility_variance=timing.volatility_variance+toc(stage);
+        end
         check_time();
     catch problem
         unfinished_stage=stage_name; unfinished_sweep_seconds=toc(iteration_clock);
@@ -169,6 +220,13 @@ while completed<cfg.max_iterations
         buffer.P_pairs(:,:,end+1)=packed;
         buffer.h(:,:,end+1)=state.h;
         buffer.B(:,:,end+1)=state.B;
+        buffer.V(:,:,end+1)=state.V;
+        buffer.sig2h(end+1,:)=state.sig2h;
+        buffer.sig2r(end+1,:)=state.sig2r;
+        parameter_sums.V=parameter_sums.V+state.V;
+        parameter_sums.sig2h=parameter_sums.sig2h+state.sig2h;
+        parameter_sums.sig2r=parameter_sums.sig2r+state.sig2r;
+        parameter_sums.count=parameter_sums.count+1;
         buffer.iterations(end+1)=completed; saved=saved+1;
         if numel(buffer.iterations)>=cfg.chunk_size, flush_buffer(); end
     end
@@ -180,8 +238,17 @@ end
 if ~isempty(buffer.iterations), flush_buffer(); end
 commit_checkpoint();
 atomic_save(fullfile(run_dir,'diagnostics.mat'),'diagnostics',diagnostics);
+parameter_estimate=[];
+if parameter_sums.count>0
+    parameter_estimate=struct('V',parameter_sums.V/parameter_sums.count, ...
+        'sig2h',parameter_sums.sig2h/parameter_sums.count, ...
+        'sig2r',parameter_sums.sig2r/parameter_sums.count);
+end
 summary=struct('status',status,'reason',stop_reason,'failure_identifier',failure_identifier, ...
     'convergence_established',false,'chain_id',cfg.chain_id,'seed',cfg.seed+cfg.chain_id-1, ...
+    'estimate_parameters',cfg.estimate_parameters,'inference_mode',inference_mode, ...
+    'parameter_smoothing',cfg.parameter_smoothing, ...
+    'parameter_draws',parameter_sums.count,'parameter_estimate',parameter_estimate, ...
     'completed_iterations',completed,'burnin',cfg.burnin,'saved_draws',saved, ...
     'session_completed_iterations',completed-session_start_iterations, ...
     'unfinished_stage',unfinished_stage,'unfinished_sweep_seconds',unfinished_sweep_seconds, ...
@@ -202,7 +269,12 @@ summary=struct('status',status,'reason',stop_reason,'failure_identifier',failure
     'old_dense_brownian_GiB',8*T*T*(m+nr)/2^30, ...
     'old_4000_draw_h_r_P_GiB',8*T*4000*(m+nr+m*m)/2^30, ...
     'packed_P_2000_draw_GiB',8*T*2000*nr/2^30, ...
-    'storage','Postburn-in packed P_pairs plus h/B; no r history; one checkpoint; chain identity preserved.');
+    'storage','Postburn-in packed P_pairs plus h/B and V/sig2h/sig2r; no r history; one checkpoint; chain identity preserved.');
+if isfield(priors,'excluded_initial_weeks')
+    summary.excluded_initial_weeks=priors.excluded_initial_weeks;
+    summary.calibration_start=char(string(priors.calibration_dates(1),'yyyy-MM-dd'));
+    summary.calibration_end=char(string(priors.calibration_dates(end),'yyyy-MM-dd'));
+end
 summary_path=fullfile(run_dir,'pilot_summary.json'); atomic_json(summary_path,summary);
 result=summary; result.run_dir=run_dir; result.priors=priors;
 result.dates=panel.dates; result.tickers=panel.tickers;
@@ -224,10 +296,76 @@ atomic_save(fullfile(run_dir,'result.mat'),'result',result);
         saveclock=tic;
         checkpoint=struct('identity',identity,'state',state,'rng',committed_rng, ...
             'completed',completed,'saved',saved,'next_chunk',next_chunk,'buffer',buffer, ...
+            'parameter_sums',parameter_sums, ...
             'diagnostics',diagnostics,'timing',timing,'total_seconds',previous_seconds+toc(started));
         atomic_save(checkpoint_path,'checkpoint',checkpoint);
         timing.checkpoint=timing.checkpoint+toc(saveclock);
     end
+end
+
+function parameters=validate_fixed_parameters(parameters,m,nr)
+if ~isstruct(parameters)||~isscalar(parameters)|| ...
+        ~all(isfield(parameters,{'V','sig2h','sig2r'}))
+    error('dsc:FixedParameters','fixed_parameters must contain V, sig2h and sig2r.');
+end
+V=parameters.V;
+if ~isnumeric(V)||~isreal(V)||~isequal(size(V),[m m])||any(~isfinite(V(:)))|| ...
+        norm(V-V','fro')>1e-12*max(1,norm(V,'fro'))
+    error('dsc:FixedParameters','Fixed V must be a finite symmetric m-by-m covariance matrix.');
+end
+V=(double(V)+double(V)')/2;
+[~,bad]=chol(V);
+if bad, error('dsc:FixedParameters','Fixed V must be positive definite.'); end
+for entry={{'sig2h',m},{'sig2r',nr}}
+    name=entry{1}{1}; width=entry{1}{2}; values=parameters.(name);
+    if ~isnumeric(values)||~isreal(values)||~isequal(size(values),[1 width])|| ...
+            any(~isfinite(values))||any(values<=0)
+        error('dsc:FixedParameters','Fixed %s must be a finite positive 1-by-%d vector.',name,width);
+    end
+end
+parameters=struct('V',V,'sig2h',double(parameters.sig2h),'sig2r',double(parameters.sig2r));
+end
+
+function draws=validate_parameter_draws(draws,m,nr)
+if ~isstruct(draws)||~isscalar(draws)||~all(isfield(draws,{'V','sig2h','sig2r'}))
+    error('dsc:FixedParameters','fixed_parameter_draws must contain V, sig2h and sig2r.');
+end
+V=draws.V; sig2h=draws.sig2h; sig2r=draws.sig2r;
+if ~isnumeric(V)||~isreal(V)||ndims(V)~=3||size(V,1)~=m||size(V,2)~=m|| ...
+        any(~isfinite(V(:)))
+    error('dsc:FixedParameters','Fixed V draws must be finite m-by-m-by-draw covariance matrices.');
+end
+n=size(V,3);
+if n<2||~isnumeric(sig2h)||~isreal(sig2h)||~isequal(size(sig2h),[n m])|| ...
+        ~isnumeric(sig2r)||~isreal(sig2r)||~isequal(size(sig2r),[n nr])|| ...
+        any(~isfinite(sig2h(:)))||any(sig2h(:)<=0)|| ...
+        any(~isfinite(sig2r(:)))||any(sig2r(:)<=0)
+    error('dsc:FixedParameters','Fixed variance draws must be positive finite draw-by-coordinate arrays.');
+end
+for d=1:n
+    C=(double(V(:,:,d))+double(V(:,:,d))')/2;
+    if norm(C-C','fro')>1e-12*max(1,norm(C,'fro'))
+        error('dsc:FixedParameters','Fixed V draw %d is not symmetric.',d);
+    end
+    [~,bad]=chol(C);
+    if bad, error('dsc:FixedParameters','Fixed V draw %d is not positive definite.',d); end
+    V(:,:,d)=C;
+end
+draws=struct('V',double(V),'sig2h',double(sig2h),'sig2r',double(sig2r));
+end
+
+function state=apply_parameter_draw(state,draws,iteration)
+params=parameter_draw_at(draws,iteration);
+state.V=params.V;
+state.sig2h=params.sig2h;
+state.sig2r=params.sig2r;
+end
+
+function params=parameter_draw_at(draws,iteration)
+n=size(draws.V,3);
+d=mod(iteration-1,n)+1;
+params=struct('V',draws.V(:,:,d),'sig2h',draws.sig2h(d,:), ...
+    'sig2r',draws.sig2r(d,:));
 end
 
 function B=draw_mean(Y,obs,h,cache,V,priors,check)

@@ -8,8 +8,8 @@ root=fileparts(mfilename('fullpath'));
 addpath(fullfile(root,'toolbox'),fullfile(root,'core'));
 if ~exist(cfg.output_root,'dir'), mkdir(cfg.output_root); end
 panel=prepare_weekly_panel(cfg);
+[priors,inference]=dsc_prepare_inference(panel,cfg);
 summary=analyze_weekly_panel(panel,cfg);
-priors=dsc_calibrate_priors(panel,cfg);
 save(fullfile(cfg.output_root,'data','calibrated_priors.mat'),'priors','cfg','-v7.3');
 write_json(fullfile(cfg.output_root,'data','prior_summary.json'),priors);
 manifest.schema_version=1;
@@ -29,16 +29,24 @@ if status==0, manifest.git_revision=strtrim(revision); end
 if status==0, manifest.git_dirty=~isempty(strtrim(changes)); end
 manifest.matlab_source_hash=code_hash(root);
 manifest.created_at=char(datetime('now','Format','yyyy-MM-dd''T''HH:mm:ss'));
-manifest.inference='historical full-sample smoothing; empirical-Bayes priors';
+manifest.inference=struct('estimate_parameters',inference.estimate_parameters, ...
+    'parameter_estimation_end',inference.estimation_end, ...
+    'calibration_weeks',inference.calibration_weeks, ...
+    'model_start',char(string(inference.smoothing_panel.dates(1),'yyyy-MM-dd')), ...
+    'state_scope','historical smoothing after the reserved initial calibration weeks');
 manifest.production_authorized=false;
 write_json(fullfile(cfg.output_root,'run_manifest.json'),manifest);
-result=struct('panel',panel,'summary',summary,'priors',priors,'manifest',manifest);
+result=struct('panel',panel,'summary',summary,'priors',priors,'manifest',manifest,'inference',inference);
 if strcmp(mode,'pilot')
+    if ~inference.estimate_parameters||inference.training_panel.dates(end)~=panel.dates(end)
+        error('dsc:PilotMode','Use run_weekly_model_report for saved-parameter smoothing or cutoff estimation.');
+    end
     stamp=char(datetime('now','Format','yyyyMMdd-HHmmss-SSS'));
     run_dir=fullfile(cfg.output_root,'runs',[stamp '-chain' num2str(cfg.chain_id)]);
     if ~exist(run_dir,'dir'), mkdir(run_dir); end
     write_json(fullfile(run_dir,'run_manifest.json'),manifest);
-    result.pilot=run_weekly_pilot(panel,priors,cfg,run_dir);
+    result.pilot=run_weekly_pilot(inference.training_panel,priors,cfg,run_dir);
+    write_json(fullfile(run_dir,'prior_summary.json'),priors);
     write_json(fullfile(cfg.output_root,'latest_pilot.json'),result.pilot);
 end
 end

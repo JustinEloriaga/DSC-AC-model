@@ -19,7 +19,7 @@ cfg.correlation_threads = 4;
 if ~exist(cfg.output_root,'dir'), mkdir(cfg.output_root); end
 panel = prepare_weekly_panel(cfg);
 summary = analyze_weekly_panel(panel,cfg);
-priors = dsc_calibrate_priors(panel,cfg);
+[priors,inference] = dsc_prepare_inference(panel,cfg);
 data_dir = fullfile(cfg.output_root,'data');
 if ~exist(data_dir,'dir'), mkdir(data_dir); end
 save(fullfile(data_dir,'calibrated_priors.mat'),'priors','cfg','-v7.3');
@@ -45,7 +45,7 @@ run_manifest.created_at = char(datetime('now','Format','yyyy-MM-dd''T''HH:mm:ss'
 run_manifest.convergence_established = false;
 write_json_local(fullfile(run_dir,'run_manifest.json'),run_manifest);
 
-result = dsc_sample(panel,priors,cfg,run_dir);
+result = dsc_run_inference(panel,priors,cfg,run_dir,inference);
 write_json_local(fullfile(cfg.output_root,'latest_100x10.json'),result);
 end
 

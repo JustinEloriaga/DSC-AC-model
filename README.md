@@ -10,6 +10,8 @@ For the configurable end-to-end workflow that runs the model, creates the Bayesi
 result = run_weekly_model_report(WarmupIterations=10,RetainedDraws=100,MaxHours=2);
 ```
 
+Set `EstimateParameters=true, EstimationEndDate="2020-12-25"` to estimate through a cutoff, save timestamped parameter draws, and smooth through the latest data. Set `EstimateParameters=false` to load the latest saved parameters. By default `ParameterSmoothing="mean"` uses saved posterior means as fixed plug-in values; `ParameterSmoothing="draws"` explicitly propagates saved parameter draws through smoothing. Parameter files retain their draws in either mode. The program prints the estimation date and training cutoff. See [the run guide](RUN_MODEL_AND_REPORT.md#estimate-parameters-or-load-a-saved-model) for file selection, draw settings, and the meaning of the conditional bands.
+
 MATLAB R2024b with Statistics and Machine Learning and Econometrics toolboxes was verified locally. From the repository root:
 
 ```matlab
@@ -51,7 +53,7 @@ Rolling correlations are trailing sample correlations. They begin only after the
 
 The new path uses the existing DSC-SV-AH model family with `p=0`: 14 time-varying means, 14 log-variance states, 91 unrestricted matrix-log correlation states, and a joint positive-definite correlation matrix. It does not estimate 91 separate bivariate models.
 
-Initial empirical-Bayes moments use the first 104 returns with 5% diagonal covariance shrinkage. Evolution scales use rolling covariance estimates over the full historical panel, comparing 52/104/156 weeks and choosing 104. This data reuse is deliberate and documented. All 1,204 dates remain in estimation.
+Initial empirical-Bayes moments use the first 104 returns with 5% diagonal covariance shrinkage. These 104 calendar weeks are excluded from both parameter estimation and smoothing, leaving 1,100 model dates from 12 August 2005 to 4 September 2026 in the current data. Evolution scales retain rolling covariance calibration through the estimation cutoff, comparing 52/104/156 weeks and choosing 104; those rolling windows can include observations also used in estimation. Descriptive outputs retain all 1,204 dates. Saved parameter files record separate calibration and estimation histories plus retained parameter draws; files from the earlier inclusive or mean-only formats require re-estimation.
 
 The new sampler uses linear-memory random-walk draws, observed-subspace likelihoods, cached correlation factorizations for volatility updates, explicit numerical failures and atomic completed-sweep checkpoints. It stores chain-specific post-burn-in packed correlations, not full matrix histories. Warm-up diagnostics are labeled as such.
 

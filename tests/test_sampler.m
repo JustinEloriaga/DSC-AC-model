@@ -38,16 +38,28 @@ cfg=testCase.TestData.cfg; folder=tempname; mkdir(folder);
 result=dsc_sample(testCase.TestData.panel,testCase.TestData.priors,cfg,folder);
 verifyEqual(testCase,result.completed_iterations,4);
 verifyEqual(testCase,result.saved_draws,3);
+verifyEqual(testCase,result.parameter_draws,3);
+verifyTrue(testCase,result.estimate_parameters);
+verifyEqual(testCase,result.inference_mode,'parameter_estimation');
 verifyFalse(testCase,result.convergence_established);
 verifyEqual(testCase,result.T,32);
 files=dir(fullfile(folder,'posterior_chunk_*.mat')); iterations=[];
+V=[]; sig2h=[]; sig2r=[];
 for i=1:numel(files)
     tmp=load(fullfile(files(i).folder,files(i).name),'chunk');
     verifySize(testCase,tmp.chunk.P_pairs,[32 3 numel(tmp.chunk.iterations)]);
     verifyTrue(testCase,all(abs(tmp.chunk.P_pairs(:))<1));
+    verifyEqual(testCase,size(tmp.chunk.V,3),numel(tmp.chunk.iterations));
+    V=cat(3,V,tmp.chunk.V); %#ok<AGROW>
+    sig2h=[sig2h;tmp.chunk.sig2h]; %#ok<AGROW>
+    sig2r=[sig2r;tmp.chunk.sig2r]; %#ok<AGROW>
     iterations=[iterations,tmp.chunk.iterations]; %#ok<AGROW>
 end
 verifyEqual(testCase,iterations,2:4);
+verifyEqual(testCase,result.parameter_estimate.V,mean(V,3),'AbsTol',1e-14);
+verifyEqual(testCase,result.parameter_estimate.sig2h,mean(sig2h,1),'AbsTol',1e-14);
+verifyEqual(testCase,result.parameter_estimate.sig2r,mean(sig2r,1),'AbsTol',1e-14);
+verifyGreaterThan(testCase,min(eig(result.parameter_estimate.V)),0);
 end
 
 function testResumeMatchesUninterrupted(testCase)
@@ -62,6 +74,8 @@ verifyEqual(testCase,a.checkpoint.state,b.checkpoint.state);
 verifyEqual(testCase,a.checkpoint.rng,b.checkpoint.rng);
 verifyEqual(testCase,a.checkpoint.diagnostics.sig2h,b.checkpoint.diagnostics.sig2h);
 verifyEqual(testCase,a.checkpoint.diagnostics.sig2r,b.checkpoint.diagnostics.sig2r);
+verifyEqual(testCase,a.checkpoint.parameter_sums,b.checkpoint.parameter_sums);
+verifyEqual(testCase,a.checkpoint.parameter_sums.count,3);
 end
 
 function testMaskedValuesAreIgnored(testCase)
@@ -83,9 +97,144 @@ result=dsc_sample(testCase.TestData.panel,testCase.TestData.priors,cfg,folder);
 verifyEqual(testCase,result.status,'time_limit');
 verifyEqual(testCase,result.completed_iterations,0);
 verifyEqual(testCase,result.saved_draws,0);
+verifyEqual(testCase,result.parameter_draws,0);
+verifyEmpty(testCase,result.parameter_estimate);
 tmp=load(fullfile(folder,'checkpoint.mat'),'checkpoint');
 verifyEqual(testCase,tmp.checkpoint.completed,0);
 verifyEqual(testCase,tmp.checkpoint.state.B,repmat(testCase.TestData.priors.Bbar',32,1));
+end
+
+function testFixedParametersSmoothStatesWithoutUpdatingParameters(testCase)
+cfg=testCase.TestData.cfg; cfg.estimate_parameters=false;
+cfg.fixed_parameters=synthetic_fixed_parameters();
+panel=testCase.TestData.panel; priors=testCase.TestData.priors;
+folder=tempname; mkdir(folder);
+result=dsc_sample(panel,priors,cfg,folder);
+verifyEqual(testCase,result.completed_iterations,cfg.max_iterations);
+verifyFalse(testCase,result.estimate_parameters);
+verifyEqual(testCase,result.inference_mode,'fixed_parameter_smoothing');
+verifyEqual(testCase,result.parameter_draws,3);
+verifyEqual(testCase,result.parameter_estimate,cfg.fixed_parameters,'AbsTol',1e-14);
+verifyEqual(testCase,result.stage_seconds.mean_variance,0);
+verifyEqual(testCase,result.stage_seconds.volatility_variance,0);
+verifyEqual(testCase,result.stage_seconds.correlation_variance,0);
+loaded=load(fullfile(folder,'checkpoint.mat'),'checkpoint'); cp=loaded.checkpoint;
+verifyEqual(testCase,cp.state.V,cfg.fixed_parameters.V);
+verifyEqual(testCase,cp.state.sig2h,cfg.fixed_parameters.sig2h);
+verifyEqual(testCase,cp.state.sig2r,cfg.fixed_parameters.sig2r);
+verifyEqual(testCase,cp.diagnostics.V_diag,repmat(diag(cfg.fixed_parameters.V)',4,1));
+verifyEqual(testCase,cp.diagnostics.sig2h,repmat(cfg.fixed_parameters.sig2h,4,1));
+verifyEqual(testCase,cp.diagnostics.sig2r,repmat(cfg.fixed_parameters.sig2r,4,1));
+verifyFalse(testCase,isequal(cp.state.B,repmat(priors.Bbar',32,1)));
+verifyFalse(testCase,isequal(cp.state.h,repmat(priors.mh0',32,1)));
+verifyFalse(testCase,isequal(cp.state.r,repmat(priors.mr0',32,1)));
+verifyEqual(testCase,result.parameter_smoothing,'mean');
+files=dir(fullfile(folder,'posterior_chunk_*.mat'));
+for k=1:numel(files)
+    loaded=load(fullfile(files(k).folder,files(k).name),'chunk');
+    n=numel(loaded.chunk.iterations);
+    verifyEqual(testCase,loaded.chunk.V,repmat(cfg.fixed_parameters.V,1,1,n));
+    verifyEqual(testCase,loaded.chunk.sig2h,repmat(cfg.fixed_parameters.sig2h,n,1));
+    verifyEqual(testCase,loaded.chunk.sig2r,repmat(cfg.fixed_parameters.sig2r,n,1));
+end
+end
+
+function testFixedParameterDrawSmoothingRemainsExplicit(testCase)
+cfg=testCase.TestData.cfg; cfg.estimate_parameters=false;
+parameters=synthetic_fixed_parameters();
+cfg.fixed_parameter_draws=struct('V',cat(3,parameters.V,2*parameters.V), ...
+    'sig2h',[parameters.sig2h;2*parameters.sig2h], ...
+    'sig2r',[parameters.sig2r;2*parameters.sig2r]);
+cfg.parameter_smoothing='draws'; cfg.max_iterations=2;
+folder=tempname; mkdir(folder);
+result=dsc_sample(testCase.TestData.panel,testCase.TestData.priors,cfg,folder);
+verifyEqual(testCase,result.parameter_smoothing,'draws');
+checkpoint=load(fullfile(folder,'checkpoint.mat'),'checkpoint');
+verifyEqual(testCase,checkpoint.checkpoint.state.V,2*parameters.V);
+verifyEqual(testCase,checkpoint.checkpoint.state.sig2h,2*parameters.sig2h);
+verifyEqual(testCase,checkpoint.checkpoint.state.sig2r,2*parameters.sig2r);
+verifyEqual(testCase,checkpoint.checkpoint.diagnostics.sig2h,cfg.fixed_parameter_draws.sig2h);
+end
+
+function testMissingOrEmptySmoothingDefaultsToMean(testCase)
+cfg=testCase.TestData.cfg; cfg.estimate_parameters=false;
+cfg.fixed_parameters=synthetic_fixed_parameters(); cfg.max_iterations=1; cfg.burnin=0;
+panel=testCase.TestData.panel; priors=testCase.TestData.priors;
+cfg.parameter_smoothing=''; folder=tempname; mkdir(folder);
+result=dsc_sample(panel,priors,cfg,folder);
+verifyEqual(testCase,result.parameter_smoothing,'mean');
+cfg=rmfield(cfg,'parameter_smoothing'); folder=tempname; mkdir(folder);
+result=dsc_sample(panel,priors,cfg,folder);
+verifyEqual(testCase,result.parameter_smoothing,'mean');
+end
+
+function testFixedParameterResumeAndIdentity(testCase)
+cfg=testCase.TestData.cfg; cfg.estimate_parameters=false;
+cfg.fixed_parameters=synthetic_fixed_parameters();
+panel=testCase.TestData.panel; priors=testCase.TestData.priors;
+full=tempname; split=tempname; mkdir(full); mkdir(split);
+result_full=dsc_sample(panel,priors,cfg,full);
+cfg.max_iterations=2; dsc_sample(panel,priors,cfg,split);
+cfg.max_iterations=4; cfg.resume=true;
+result_split=dsc_sample(panel,priors,cfg,split);
+a=load(fullfile(full,'checkpoint.mat'),'checkpoint');
+b=load(fullfile(split,'checkpoint.mat'),'checkpoint');
+verifyEqual(testCase,a.checkpoint.state,b.checkpoint.state);
+verifyEqual(testCase,a.checkpoint.rng,b.checkpoint.rng);
+verifyEqual(testCase,a.checkpoint.parameter_sums,b.checkpoint.parameter_sums);
+verifyEqual(testCase,result_full.parameter_estimate,result_split.parameter_estimate);
+cfg.fixed_parameters.V=cfg.fixed_parameters.V*2;
+verifyError(testCase,@()dsc_sample(panel,priors,cfg,split),'dsc:ResumeMismatch');
+cfg.fixed_parameters=synthetic_fixed_parameters(); cfg.estimate_parameters=true;
+verifyError(testCase,@()dsc_sample(panel,priors,cfg,split),'dsc:ResumeMismatch');
+end
+
+function testFixedParameterValidation(testCase)
+cfg=testCase.TestData.cfg; cfg.estimate_parameters=false;
+panel=testCase.TestData.panel; priors=testCase.TestData.priors;
+verifyError(testCase,@()dsc_sample(panel,priors,cfg,tempname),'dsc:FixedParameters');
+parameters=synthetic_fixed_parameters();
+bad=parameters; bad.V(1,1)=-1;
+cfg.fixed_parameters=bad;
+verifyError(testCase,@()dsc_sample(panel,priors,cfg,tempname),'dsc:FixedParameters');
+bad=parameters; bad.V(1,2)=.9; cfg.fixed_parameters=bad;
+verifyError(testCase,@()dsc_sample(panel,priors,cfg,tempname),'dsc:FixedParameters');
+bad=parameters; bad.sig2h=[1 2]; cfg.fixed_parameters=bad;
+verifyError(testCase,@()dsc_sample(panel,priors,cfg,tempname),'dsc:FixedParameters');
+bad=parameters; bad.sig2r(1)=NaN; cfg.fixed_parameters=bad;
+verifyError(testCase,@()dsc_sample(panel,priors,cfg,tempname),'dsc:FixedParameters');
+cfg.fixed_parameters=parameters; cfg.estimate_parameters=2;
+verifyError(testCase,@()dsc_sample(panel,priors,cfg,tempname),'dsc:SamplerConfig');
+end
+
+function testRetainedParameterMeansRespectThinning(testCase)
+cfg=testCase.TestData.cfg; cfg.burnin=1; cfg.thin=2; cfg.max_iterations=5;
+folder=tempname; mkdir(folder);
+result=dsc_sample(testCase.TestData.panel,testCase.TestData.priors,cfg,folder);
+loaded=load(fullfile(folder,'checkpoint.mat'),'checkpoint'); cp=loaded.checkpoint;
+verifyEqual(testCase,result.parameter_draws,2);
+verifyEqual(testCase,cp.parameter_sums.count,2);
+verifyEqual(testCase,result.parameter_estimate.sig2h,mean(cp.diagnostics.sig2h([3 5],:),1));
+verifyEqual(testCase,result.parameter_estimate.sig2r,mean(cp.diagnostics.sig2r([3 5],:),1));
+verifyEqual(testCase,diag(result.parameter_estimate.V)',mean(cp.diagnostics.V_diag([3 5],:),1));
+end
+
+function testWarmupOnlyDoesNotProduceParameterEstimate(testCase)
+cfg=testCase.TestData.cfg; cfg.max_iterations=2; cfg.burnin=2;
+folder=tempname; mkdir(folder);
+result=dsc_sample(testCase.TestData.panel,testCase.TestData.priors,cfg,folder);
+verifyEqual(testCase,result.completed_iterations,2);
+verifyEqual(testCase,result.parameter_draws,0);
+verifyEmpty(testCase,result.parameter_estimate);
+verifyEmpty(testCase,dir(fullfile(folder,'posterior_chunk_*.mat')));
+loaded=load(fullfile(folder,'checkpoint.mat'),'checkpoint');
+verifyEqual(testCase,loaded.checkpoint.parameter_sums.count,0);
+verifyEqual(testCase,loaded.checkpoint.parameter_sums.V,zeros(3));
+end
+
+function parameters=synthetic_fixed_parameters()
+parameters=struct('V',[.02 .003 -.001;.003 .015 .002;-.001 .002 .01], ...
+    'sig2h',[.01 .02 .015],'sig2r',[.02 .01 .015]);
 end
 
 function testInitialMeanPriorIndependentOfEvolutionVariance(testCase)

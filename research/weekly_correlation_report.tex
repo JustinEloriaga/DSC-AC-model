@@ -130,7 +130,7 @@ The mean-state priors use
 B_1\sim\Normal(\bar B,4\bar V_B),\qquad
 V\sim IW(V_{0B},\nu_B),\quad V_{0B}=N_0\bar V_B k_B^2,\quad\nu_B=N_0,\quad k_B=.01.
 \end{equation}
-The initial mean $B_1$ is independent of $V$, and mean-state innovations begin at $t=2$. The conditional inverse-Wishart update therefore uses the $T-1$ mean increments. Under this scale convention, the prior mean is $V_{0B}/(\nu_B-m-1)$, when it exists, and the mode is $V_{0B}/(\nu_B+m+1)$. These labels are distinct. Initial state means are $\bar h=\log\diag S_0$ for log variances and $\bar r=\vect(\log\operatorname{Corr}(S_0))$ for correlation coordinates.
+The initial mean $B_1$ is independent of $V$, and mean-state innovations begin at $t=2$. During parameter estimation, the conditional inverse-Wishart update uses the mean increments within the estimation sample. With $T_{\mathrm{est}}$ estimation dates, these are $T_{\mathrm{est}}-1$ increments. During fixed-parameter smoothing, $V$ is held at its saved estimate. Under this scale convention, the prior mean is $V_{0B}/(\nu_B-m-1)$, when it exists, and the mode is $V_{0B}/(\nu_B+m+1)$. These labels are distinct. Initial state means are $\bar h=\log\diag S_0$ for log variances and $\bar r=\vect(\log\operatorname{Corr}(S_0))$ for correlation coordinates.
 
 For each state family, rolling covariance estimates use 104-week windows and five-percent shrinkage. Differences of rolling log variances or matrix-log correlation coordinates estimate evolution variability. The common prior mean in each family is the median of the coordinate-specific difference variances. The inverse-gamma hyperparameters are $a_h=a_r=10$, $b_h=9\bar\sigma_h^2$, and $b_r=9\bar\sigma_r^2$, so $E[\sigma^2]=b/(a-1)=\bar\sigma^2$. The calibration also reports 52- and 156-week sensitivity.
 
@@ -138,7 +138,7 @@ Conditional on its innovation variance, each volatility or correlation coordinat
 \begin{equation}
 \operatorname{Cov}(z_t,z_u)=\sigma^2\{10+\min(t,u)\},\qquad t,u=1,\ldots,T.
 \end{equation}
-No initial observations are removed from estimation: the first 104 returns inform the initial priors and also enter the likelihood. Full-sample rolling statistics inform the evolution priors. This empirical-Bayes reuse of the data simplifies calibration but can understate calibration uncertainty. It must be disclosed and assessed before interpreting production uncertainty bands.
+The selected run's calibration and likelihood periods are recorded below. In the current workflow, model time starts after the reserved initial-prior period; those initial observations do not enter either the estimation or smoothing likelihood. Rolling statistics through the parameter-estimation cutoff continue to inform the evolution priors and may include observations also used in estimation. Later observations enter state smoothing without recalibrating saved priors. This empirical-Bayes calibration can understate prior-calibration uncertainty.
 \input{generated/prior_sensitivity.tex}
 \clearpage
 \section{All 91 pairwise correlation paths}

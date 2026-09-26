@@ -7,6 +7,7 @@ Generated tables and vector evidence charts share one numerical source of truth.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -82,6 +83,8 @@ def read_csv(folder, name, required):
 
 
 def build(args):
+    # A selected posterior run also owns its timing and calibrated priors.
+    args.pilot = selected_pilot_summary(args.pilot, args.posterior_run)
     folder = args.data.resolve()
     generated = ROOT / "research/generated"
     figures = generated / "figures"
@@ -406,6 +409,12 @@ def build(args):
                 manifest[label + "_path"] = str(evidence_path.resolve())
     if posterior:
         manifest["posterior"] = posterior
+        if "inference" in posterior:
+            manifest["inference"] = posterior["inference"]
+    prior_path = selected_prior_summary(args.pilot, folder)
+    if prior_path.is_file():
+        manifest["prior_summary_path"] = str(prior_path.resolve())
+        manifest["prior_summary_sha256"] = hashlib.sha256(prior_path.read_bytes()).hexdigest()
     write("publication_manifest.json", json.dumps(manifest, indent=2) + "\n")
     if not args.no_compile:
         output = ROOT / "output/pdf"
@@ -448,6 +457,11 @@ def make_bayesian_paths(args, write, figures, data_summary):
         raise ValueError("Posterior-path draw count disagrees with the sampler summary")
     if paths.get("color_scale") != [-1, 1] or "Continuous RdBu_r" not in paths.get("color_rule", ""):
         raise ValueError("Posterior paths must use the Figure 1 continuous correlation scale")
+    if warmup != int(sampler.get("burnin", warmup)):
+        raise ValueError("Posterior-path warm-up count disagrees with the sampler summary")
+    if paths.get("run_dir") and Path(paths["run_dir"]).resolve() != run:
+        raise ValueError("Posterior-path manifest belongs to a different sampler run")
+    inference = read_inference_metadata(run, sampler, paths, run_manifest, data_summary)
     selected_source = run / "figures/bayes_correlation_paths_selected.pdf"
     selected_target = figures / "bayesian_paths_selected.pdf"
     shutil.copy2(selected_source, selected_target)
@@ -466,8 +480,45 @@ def make_bayesian_paths(args, write, figures, data_summary):
     convergence = bool(sampler.get("convergence_established", False))
     status_text = ("Convergence diagnostics passed." if convergence else
                    "Convergence has not been established, so the bands are preliminary.")
+    scope_text = ""
+    band_text = "68\\% posterior bands from the saved run; they are not simultaneous bands."
+    if inference:
+        start = tex(inference["parameter_estimation_start"])
+        cutoff = tex(inference["parameter_estimation_end"])
+        end = tex(inference["smoothing_end"])
+        estimated = tex(inference["parameters_estimated_at"])
+        scope_text = (f"Parameters were estimated using {start}--{cutoff}; the model was saved at "
+                      f"{estimated} (UTC). State smoothing uses observations through {end}. ")
+        if inference.get("calibration_weeks", 0):
+            scope_text = (f"The first {inference['calibration_weeks']} weekly returns "
+                          f"({tex(inference['calibration_start'])}--{tex(inference['calibration_end'])}) "
+                          "are reserved for initial-prior calibration and excluded from the Bayesian likelihood. "
+                          "Descriptive tables retain the full data sample. " + scope_text)
+        if inference["inference_mode"] == "fixed_parameter_smoothing":
+            if inference.get("parameter_smoothing") == "draws":
+                scope_text += ("The saved retained parameter draws are reused while the mean, volatility and "
+                               "correlation states are jointly smoothed over the modeled period. These bands "
+                               "include variation across the saved parameter draws. ")
+                band_text = ("68\\% conditional posterior bands using saved parameter draws; they are not "
+                             "simultaneous bands.")
+            else:
+                scope_text += ("The posterior-mean parameter estimates stay fixed while the mean, volatility "
+                               "and correlation states are jointly smoothed over the modeled period. These "
+                               "bands show state uncertainty conditional on the saved posterior-mean "
+                               "parameters; they exclude parameter uncertainty. ")
+                band_text = ("68\\% conditional posterior bands with posterior-mean parameters fixed; they "
+                             "exclude parameter uncertainty and are not simultaneous bands.")
+        else:
+            scope_text += "These bands use joint parameter and state draws and include parameter uncertainty. "
+        if inference["parameter_estimation_start"] < inference["parameter_estimation_end"] < inference["smoothing_end"]:
+            scope_text += f"The dashed vertical line marks the parameter-estimation cutoff, {cutoff}. "
+        parameter_path = tex(inference["parameter_file"]).replace("/", "/\\allowbreak{}").replace("\\_", "\\_\\allowbreak{}").replace("-", "-\\allowbreak{}")
+        scope_text += ("Historical state estimates can change when later observations are included.\\par\n"
+                       "{\\footnotesize\\raggedright Saved parameter file:\\par\\ttfamily "
+                       + parameter_path + "\\par}\n")
     write("bayesian_paths.tex",
           "\\section{Bayesian correlation paths}\n"
+          + scope_text +
           f"The selected sampler run retained {draws:,} draws after {warmup:,} warm-up iterations. "
           "The dark line is the posterior median of the actual correlation $P_{ij,t}$ and the gray envelope "
           "contains the pointwise 16th and 84th percentiles. Vertical colors use the same continuous scale "
@@ -477,13 +528,13 @@ def make_bayesian_paths(args, write, figures, data_summary):
           "\\includegraphics[width=\\linewidth,height=.80\\textheight,keepaspectratio]"
           "{generated/figures/bayesian_paths_selected.pdf}\n"
           "\\caption{Selected smoothed conditional innovation-correlation paths. The intervals are pointwise "
-          "68\\% posterior bands from the saved run; they are not simultaneous bands.}\n"
+          + band_text + "}\n"
           "\\end{figure}\n"
           "\\clearpage\n"
           "\\subsection{All 91 Bayesian correlation paths}\n"
           "The following pages use the same vertical scale, color scale, and posterior summaries for every pair.\n" +
           "".join(pages) + "\\clearpage\n")
-    return {
+    result = {
         "run_dir": str(run),
         "retained_draws": draws,
         "warmup_iterations": warmup,
@@ -492,6 +543,92 @@ def make_bayesian_paths(args, write, figures, data_summary):
         "paths_manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
         "figure_sha256": {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in copied},
     }
+    if inference:
+        result["inference"] = inference
+        result["inference_metadata_sha256"] = hashlib.sha256((run / "inference_metadata.json").read_bytes()).hexdigest()
+        result["run_manifest_sha256"] = hashlib.sha256(run_manifest_path.read_bytes()).hexdigest()
+    return result
+
+
+def read_inference_metadata(run, sampler, paths, run_manifest, data_summary):
+    """Require provenance and uncertainty labels to agree across saved artifacts."""
+    metadata_path = run / "inference_metadata.json"
+    if not metadata_path.is_file():
+        if (isinstance(paths.get("inference"), dict) or isinstance(run_manifest.get("inference"), dict) or
+                sampler.get("inference_mode") == "fixed_parameter_smoothing"):
+            raise ValueError("Inference metadata is missing; regenerate the selected run's correlation figures")
+        return None
+    inference = json.loads(metadata_path.read_text())
+    required = {"inference_mode", "parameter_file", "parameters_estimated_at", "parameter_estimation_start",
+                "parameter_estimation_end", "parameter_estimation_draws", "parameter_estimation_run",
+                "smoothing_end", "parameter_uncertainty_in_bands", "parameter_smoothing"}
+    if not isinstance(inference, dict) or not required.issubset(inference):
+        raise ValueError("Inference metadata lacks required estimation provenance")
+    if inference != paths.get("inference") or inference != run_manifest.get("inference"):
+        raise ValueError("Inference metadata disagrees with the run or figure manifest; regenerate the correlation figures")
+    mode = inference["inference_mode"]
+    if mode not in {"parameter_estimation", "fixed_parameter_smoothing"}:
+        raise ValueError("Unknown inference mode in saved correlation paths")
+    smoothing = inference["parameter_smoothing"]
+    if smoothing not in {"draws", "mean"}:
+        raise ValueError("Unknown parameter smoothing mode in saved correlation paths")
+    if (type(inference["parameter_uncertainty_in_bands"]) is not bool or
+            inference["parameter_uncertainty_in_bands"] != (mode == "parameter_estimation" or smoothing == "draws")):
+        raise ValueError("Correlation-band uncertainty scope disagrees with the inference mode")
+    draws = inference["parameter_estimation_draws"]
+    if type(draws) is not int or draws < 2:
+        raise ValueError("Parameter estimate must be based on at least two retained draws")
+    for key in required - {"parameter_uncertainty_in_bands", "parameter_estimation_draws"}:
+        if not isinstance(inference[key], str) or not inference[key]:
+            raise ValueError(f"Inference field {key} must be nonempty text")
+    try:
+        start, cutoff, end = [datetime.strptime(inference[key], "%Y-%m-%d") for key in
+                              ("parameter_estimation_start", "parameter_estimation_end", "smoothing_end")]
+        datetime.strptime(inference["parameters_estimated_at"], "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+    except ValueError as problem:
+        raise ValueError("Invalid estimation or smoothing date in inference metadata") from problem
+    if not start <= cutoff <= end or (mode == "parameter_estimation" and cutoff != end):
+        raise ValueError("Parameter-estimation dates are incompatible with the smoothing period")
+    if sampler.get("inference_mode", mode) != mode:
+        raise ValueError("Sampler and correlation paths have different inference modes")
+    excluded = inference.get("calibration_weeks", 0)
+    if type(excluded) is not int or excluded < 0:
+        raise ValueError("Invalid initial calibration-week count")
+    full_start = datetime.strptime(data_summary["first_return"], "%Y-%m-%d")
+    expected_start = full_start + timedelta(weeks=excluded)
+    if start != expected_start or inference["smoothing_end"] != data_summary["last_return"]:
+        raise ValueError("Inference sample dates disagree with the modeled suffix of the data")
+    if excluded:
+        if (inference.get("calibration_start") != data_summary["first_return"] or
+                inference.get("calibration_end") != (expected_start - timedelta(weeks=1)).strftime("%Y-%m-%d") or
+                inference.get("full_data_start") != data_summary["first_return"] or
+                inference.get("smoothing_start") != inference["parameter_estimation_start"] or
+                sampler.get("excluded_initial_weeks") != excluded):
+            raise ValueError("Calibration exclusion metadata disagrees with the model sample")
+    if "T" in sampler and "n_returns" in data_summary and sampler["T"] != data_summary["n_returns"] - excluded:
+        raise ValueError("Modeled return count does not exclude the recorded calibration weeks")
+    for fields, first_key, last_key in [(sampler, "first_date", "last_date"), (paths, "first_date", "last_date")]:
+        if (fields.get(first_key) != inference["parameter_estimation_start"] or
+                fields.get(last_key) != inference["smoothing_end"]):
+            raise ValueError("Inference sample dates disagree with saved data, sampler or figure dates")
+    return inference
+
+
+def selected_pilot_summary(pilot, posterior_run):
+    if pilot is None and posterior_run is not None:
+        return posterior_run / "pilot_summary.json"
+    return pilot
+
+
+def selected_prior_summary(pilot, folder):
+    """Bind prior tables to the selected run; legacy runs use shared outputs."""
+    if pilot is not None:
+        local = pilot.parent / "prior_summary.json"
+        if local.is_file():
+            return local
+        if (pilot.parent / "inference_metadata.json").is_file():
+            raise FileNotFoundError("The selected inference run has no saved prior_summary.json snapshot")
+    return folder / "prior_summary.json"
 
 
 def pilot_evidence_paths(pilot_path, folder):
@@ -508,13 +645,23 @@ def pilot_evidence_paths(pilot_path, folder):
 
 def make_pilot(args, write, folder):
     """Only report recorded pilot values; absent results stay explicitly unavailable."""
-    priorfile = folder / "prior_summary.json"
+    priorfile = selected_prior_summary(args.pilot, folder)
     prior = json.loads(priorfile.read_text()) if priorfile.exists() else {}
     sensitivity = prior.get("calibration", [])
+    excluded_prior = prior.get("excluded_initial_weeks", 0)
+    if excluded_prior:
+        prior_scope = (f"The first {excluded_prior} weekly returns are reserved for initial-prior calibration "
+                       "and excluded from the estimation and smoothing likelihoods. "
+                       "Model time begins at the first return after that initial period. "
+                       "Evolution-prior scales continue to use rolling windows through the parameter-estimation cutoff, "
+                       "including some observations that also enter estimation. Later observations do not recalibrate a loaded model.\\par\n")
+    else:
+        prior_scope = ("This saved legacy run used the initial calibration observations in its likelihood. "
+                       "New runs reserve the configured initial-prior weeks and exclude them from the likelihood.\\par\n")
     if sensitivity:
         rows = [[str(item["window"]), number(item["sig2h_median"], 7), number(item["sig2r_median"], 7)] for item in sensitivity]
         write("prior_sensitivity.tex", table(["Window (weeks)", "Log-variance prior mean", "Correlation-coordinate prior mean"], rows) +
-              "These are prior means for innovation variances, not return correlations. A longer calibration window lowers the scale substantially.\n")
+              "These are prior means for innovation variances, not return correlations.\n" + prior_scope)
     else:
         write("prior_sensitivity.tex", "No saved prior-sensitivity results were supplied to this build.\n")
     if args.pilot is None:
@@ -526,9 +673,19 @@ def make_pilot(args, write, folder):
         return
     pilot = json.loads(args.pilot.read_text())
     data_summary = json.loads((folder / "data_summary.json").read_text())
+    excluded = pilot.get("excluded_initial_weeks", 0)
+    if type(excluded) is not int or not 0 <= excluded < data_summary["n_returns"]:
+        raise ValueError("Invalid number of calibration weeks excluded by the sampler")
+    full_dates = pd.read_csv(folder / "weekly_returns.csv", usecols=["Date"]).Date.tolist()
+    if len(full_dates) != data_summary["n_returns"]:
+        raise ValueError("Saved return dates disagree with the published panel count")
+    if excluded and (pilot.get("calibration_start") != full_dates[0] or
+                     pilot.get("calibration_end") != full_dates[excluded - 1]):
+        raise ValueError("Sampler calibration dates disagree with the reserved initial weeks")
+    modeled_summary = dict(data_summary, n_returns=len(full_dates) - excluded, first_return=full_dates[excluded])
     for pilot_key, data_key in [("T", "n_returns"), ("m", "n_series"), ("pairs", "n_pairs"),
                                 ("first_date", "first_return"), ("last_date", "last_return")]:
-        if pilot_key in pilot and pilot[pilot_key] != data_summary[data_key]:
+        if pilot_key in pilot and pilot[pilot_key] != modeled_summary[data_key]:
             raise ValueError(f"Pilot {pilot_key} disagrees with the published panel")
     evidence_paths = pilot_evidence_paths(args.pilot, folder)
     evidence = {label: json.loads(path.read_text()) for label, path in evidence_paths.items() if path.exists()}
@@ -566,6 +723,10 @@ def make_pilot(args, write, folder):
     rows = [["Completed iterations", str(n)], ["Retained posterior draws", str(get("saved_draws", default=0))],
             ["Elapsed wall time", f"{float(elapsed)/60:.2f} minutes"],
             ["Mean time per completed iteration", f"{float(per):.2f} seconds" if n and per is not None else "Unavailable"], ["Stop status", compact_status]]
+    if excluded:
+        rows[:0] = [["Initial-prior weeks excluded", str(excluded)],
+                    ["Weekly returns in the likelihood", str(modeled_summary["n_returns"])],
+                    ["Model sample", tex(modeled_summary["first_return"] + " to " + modeled_summary["last_return"])]]
     if get("r_proposals") is not None:
         rows.append(["Correlation / volatility proposals", f"{get('r_proposals'):,} / {get('h_proposals', default=0):,}"])
     resource_text = "Peak resident process memory was not measured."
