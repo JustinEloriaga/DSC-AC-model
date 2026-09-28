@@ -16,7 +16,8 @@ priors=dsc_calibrate_priors(panel,cfg);
 estimate=struct('V',[.03 .004 0;.004 .02 0;0 0 .01], ...
     'sig2h',[.01 .02 .03],'sig2r',[.004 .003 .002]);
 run_dir=tempname; mkdir(run_dir);
-write_parameter_chunks(run_dir,estimate,3);
+training=subset_panel(panel,cfg.prior_weeks+1:T);
+write_parameter_chunks(run_dir,estimate,3,training,priors,cfg);
 result=struct('status','iteration_limit','parameter_estimate',estimate, ...
     'parameter_draws',3,'saved_draws',3,'run_dir',run_dir);
 testCase.addTeardown(@() rmdir(run_dir,'s'));
@@ -37,7 +38,7 @@ path=write_bundle(testCase);
 b=dsc_load_parameters(testCase.TestData.folder,testCase.TestData.panel);
 verifyEqual(testCase,b.parameter_estimate,testCase.TestData.result.parameter_estimate,'AbsTol',1e-14);
 verifyEqual(testCase,b.priors,testCase.TestData.priors);
-verifyEqual(testCase,b.schema_version,3);
+verifyEqual(testCase,b.schema_version,4);
 verifyEqual(testCase,b.parameter_draws,load_parameter_draws(testCase.TestData.result.run_dir));
 verifyEqual(testCase,b.training_returns,testCase.TestData.training.returns);
 verifyEqual(testCase,b.training_mask,testCase.TestData.training.observation_mask);
@@ -117,7 +118,7 @@ end
 
 function testRejectsUnknownSchemaInvalidCovarianceAndVariances(testCase)
 path=write_bundle(testCase); data=load(path,'parameters'); original=data.parameters;
-parameters=original; parameters.schema_version=4;
+parameters=original; parameters.schema_version=5;
 save(path,'parameters','-v7');
 verifyError(testCase,@()dsc_load_parameters(testCase.TestData.folder,testCase.TestData.panel), ...
     'dsc:ParametersSchema');
@@ -209,6 +210,7 @@ catch problem
     verifySubstring(testCase,problem.message,'included calibration weeks in the likelihood');
     verifySubstring(testCase,problem.message,'Re-estimate');
 end
+end
 
 function testSchemaTwoMeanOnlyRequiresReestimation(testCase)
 path=write_bundle(testCase); loaded=load(path,'parameters'); parameters=loaded.parameters;
@@ -219,6 +221,109 @@ save(path,'parameters','-v7');
 verifyError(testCase,@()dsc_load_parameters(testCase.TestData.folder,testCase.TestData.panel), ...
     'dsc:ParametersLegacyDraws');
 end
+
+function testSchemaThreeLoadsAsNotChecked(testCase)
+path=write_bundle(testCase); loaded=load(path,'parameters'); parameters=loaded.parameters;
+parameters.schema_version=3;
+parameters=rmfield(parameters,{'chain_ids','chain_dirs','chain_seeds','retained_draws_per_chain','convergence'});
+parameters.parameter_draws=rmfield(parameters.parameter_draws,{'chain_id','iteration'});
+save(path,'parameters','-v7');
+b=dsc_load_parameters(testCase.TestData.folder,testCase.TestData.panel,path);
+verifyEqual(testCase,b.schema_version,3); verifyFalse(testCase,b.convergence_established);
+verifyEqual(testCase,b.convergence.status,'not_checked'); verifyFalse(testCase,b.convergence.passed);
+verifyEqual(testCase,b.parameter_estimate,testCase.TestData.result.parameter_estimate,'AbsTol',1e-14);
+parameters.convergence_established=true; save(path,'parameters','-v7');
+verifyError(testCase,@()dsc_load_parameters(testCase.TestData.folder,testCase.TestData.panel,path), ...
+    'dsc:ParametersSchema');
+end
+
+function testMultichainParameterPoolingPreservesDrawIdentity(testCase)
+result=multichain_fixture(testCase);
+path=save_result(testCase,result);
+b=dsc_load_parameters(testCase.TestData.folder,testCase.TestData.panel,path);
+verifyEqual(testCase,b.schema_version,4);
+verifyEqual(testCase,b.chain_ids,[7 9]); verifyEqual(testCase,b.retained_draws_per_chain,[2 4]);
+verifyEqual(testCase,b.chain_seeds,testCase.TestData.cfg.seed+[6 8]);
+verifyEqual(testCase,b.parameter_draws.chain_id,[7;7;9;9;9;9]);
+verifyEqual(testCase,b.parameter_draws.iteration,[2;3;2;3;4;5]);
+verifyEqual(testCase,b.retained_draws,6);
+verifyEqual(testCase,b.parameter_estimate,result.parameter_estimate,'AbsTol',1e-14);
+verifyEqual(testCase,b.parameter_estimate.sig2h,mean(b.parameter_draws.sig2h,1),'AbsTol',1e-14);
+verifyFalse(testCase,b.convergence_established);
+end
+
+function testSaveRejectsDuplicateChainsAndAlteredSourceIdentity(testCase)
+result=multichain_fixture(testCase); duplicated=result;
+duplicated.chain_dirs=result.chain_dirs([1 1]);
+verifyError(testCase,@()save_result(testCase,duplicated),'dsc:ParametersIdentity');
+cp_path=fullfile(result.chain_dirs{2},'checkpoint.mat'); loaded=load(cp_path,'checkpoint'); original=loaded.checkpoint;
+checkpoint=original; checkpoint.identity.priors.ig_scale_h=2*checkpoint.identity.priors.ig_scale_h;
+save(cp_path,'checkpoint','-v7');
+verifyError(testCase,@()save_result(testCase,result),'dsc:ParametersIdentity');
+checkpoint=original; save(cp_path,'checkpoint','-v7');
+chunk_path=fullfile(result.chain_dirs{2},'posterior_chunk_000001.mat'); loaded=load(chunk_path,'chunk'); chunk=loaded.chunk;
+chunk.tickers=chunk.tickers([2 1 3]); save(chunk_path,'chunk','-v7');
+verifyError(testCase,@()save_result(testCase,result),'dsc:ParametersIdentity');
+verifyEmpty(testCase,dir(fullfile(testCase.TestData.folder,'dsc_parameters_*.mat')));
+end
+
+function testRejectsForgedConvergenceAndPerDrawProvenance(testCase)
+result=multichain_fixture(testCase);
+result.convergence=struct('status','passed','passed',true);
+verifyError(testCase,@()save_result(testCase,result),'dsc:ConvergenceMetadata');
+result=rmfield(result,'convergence'); path=save_result(testCase,result);
+loaded=load(path,'parameters'); original=loaded.parameters;
+parameters=original; parameters.parameter_draws.chain_id(1)=9; save(path,'parameters','-v7');
+verifyError(testCase,@()dsc_load_parameters(testCase.TestData.folder,testCase.TestData.panel,path), ...
+    'dsc:ParametersIdentity');
+parameters=original; parameters.parameter_draws.iteration(2)=parameters.parameter_draws.iteration(1);
+save(path,'parameters','-v7');
+verifyError(testCase,@()dsc_load_parameters(testCase.TestData.folder,testCase.TestData.panel,path), ...
+    'dsc:ParametersIdentity');
+parameters=original; parameters.convergence_established=true; save(path,'parameters','-v7');
+verifyError(testCase,@()dsc_load_parameters(testCase.TestData.folder,testCase.TestData.panel,path), ...
+    'dsc:ConvergenceMetadata');
+end
+
+function testRejectsInvalidSeedMetadata(testCase)
+path=write_bundle(testCase); loaded=load(path,'parameters'); original=loaded.parameters;
+for seed=[-1 2^32 .5 original.chain_seeds+1]
+    parameters=original; parameters.chain_seeds=seed; save(path,'parameters','-v7');
+    verifyError(testCase,@()dsc_load_parameters(testCase.TestData.folder,testCase.TestData.panel,path), ...
+        'dsc:ParametersIdentity');
+end
+for seed=[-1 2^32 .5]
+    parameters=original; parameters.estimation_config.seed=seed;
+    save(path,'parameters','-v7');
+    verifyError(testCase,@()dsc_load_parameters(testCase.TestData.folder,testCase.TestData.panel,path), ...
+        'dsc:ParametersIdentity');
+end
+parameters=original; parameters.estimation_config.chain_id=0;
+save(path,'parameters','-v7');
+verifyError(testCase,@()dsc_load_parameters(testCase.TestData.folder,testCase.TestData.panel,path), ...
+    'dsc:ParametersIdentity');
+end
+
+function testRejectsInvalidWarmupThinningAndConfiguredChainBase(testCase)
+path=write_bundle(testCase); loaded=load(path,'parameters'); original=loaded.parameters;
+for thin=[0 -1 .5 NaN]
+    parameters=original; parameters.estimation_config.thin=thin;
+    % A zero thinning value previously accepted repeated retained iterations.
+    if thin==0, parameters.parameter_draws.iteration(:)=parameters.estimation_config.burnin; end
+    save(path,'parameters','-v7');
+    verifyError(testCase,@()dsc_load_parameters(testCase.TestData.folder,testCase.TestData.panel,path), ...
+        'dsc:ParametersIdentity');
+end
+for burnin=[-1 .5 NaN]
+    parameters=original; parameters.estimation_config.burnin=burnin;
+    save(path,'parameters','-v7');
+    verifyError(testCase,@()dsc_load_parameters(testCase.TestData.folder,testCase.TestData.panel,path), ...
+        'dsc:ParametersIdentity');
+end
+parameters=original; parameters.estimation_config.num_chains=2;
+save(path,'parameters','-v7');
+verifyError(testCase,@()dsc_load_parameters(testCase.TestData.folder,testCase.TestData.panel,path), ...
+    'dsc:ParametersIdentity');
 end
 
 function testCalibrationBlockIsMandatoryAndExcluded(testCase)
@@ -239,7 +344,7 @@ cfg=testCase.TestData.cfg; priors=testCase.TestData.priors;
 for offset=[-1 1]
     changed=training; changed.dates=training.dates+calweeks(offset);
     verifyError(testCase,@()dsc_save_parameters(testCase.TestData.result,changed,priors,cfg, ...
-        testCase.TestData.folder,cal),'dsc:ParametersCalibration');
+        testCase.TestData.folder,cal),'dsc:ParametersIdentity');
 end
 changed=cal; changed.dates(2)=changed.dates(2)+days(1);
 verifyError(testCase,@()dsc_save_parameters(testCase.TestData.result,training,priors,cfg, ...
@@ -296,10 +401,12 @@ function restore_chunk(path,chunk)
 save(path,'chunk','-v7');
 end
 
-function write_parameter_chunks(run_dir,estimate,count)
-scale=[.9 1 1.1];
+function write_parameter_chunks(run_dir,estimate,count,panel,priors,cfg)
+scale=linspace(.9,1.1,count);
 chunk=struct();
-chunk.iterations=2:count+1;
+chunk.iterations=cfg.burnin+cfg.thin*(1:count);
+chunk.dates=panel.dates; chunk.tickers=panel.tickers;
+chunk.chain_id=cfg.chain_id; chunk.pair_i=panel.pair_i; chunk.pair_j=panel.pair_j;
 chunk.V=zeros(size(estimate.V,1),size(estimate.V,2),count);
 chunk.sig2h=zeros(count,numel(estimate.sig2h));
 chunk.sig2r=zeros(count,numel(estimate.sig2r));
@@ -309,9 +416,30 @@ for k=1:count
     chunk.sig2r(k,:)=estimate.sig2r*scale(k);
 end
 save(fullfile(run_dir,'posterior_chunk_000001.mat'),'chunk','-v7');
+identity=struct('dates',panel.dates,'tickers',panel.tickers,'returns',panel.returns, ...
+    'mask',logical(panel.observation_mask)&isfinite(panel.returns),'source_hash',panel.source_hash, ...
+    'cfg',cfg,'priors',priors);
+checkpoint=struct('identity',identity,'saved',count,'completed',chunk.iterations(end));
+save(fullfile(run_dir,'checkpoint.mat'),'checkpoint','-v7');
 end
 
 function draws=load_parameter_draws(run_dir)
 loaded=load(fullfile(run_dir,'posterior_chunk_000001.mat'),'chunk');
-draws=struct('V',loaded.chunk.V,'sig2h',loaded.chunk.sig2h,'sig2r',loaded.chunk.sig2r);
+draws=struct('V',loaded.chunk.V,'sig2h',loaded.chunk.sig2h,'sig2r',loaded.chunk.sig2r, ...
+    'chain_id',repmat(loaded.chunk.chain_id,numel(loaded.chunk.iterations),1),'iteration',loaded.chunk.iterations(:));
+end
+
+function result=multichain_fixture(testCase)
+result=testCase.TestData.result; result.run_dir=fullfile(testCase.TestData.folder,'source_chains');
+mkdir(result.run_dir); result.chain_dirs=cell(1,2);
+counts=[2 4]; ids=[7 9]; factors=[1 2]; base=result.parameter_estimate;
+for c=1:2
+    result.chain_dirs{c}=fullfile(result.run_dir,sprintf('chain_%d',ids(c))); mkdir(result.chain_dirs{c});
+    cfg=testCase.TestData.cfg; cfg.chain_id=ids(c); cfg.max_iterations=cfg.burnin+counts(c)*cfg.thin;
+    estimate=struct('V',base.V*factors(c),'sig2h',base.sig2h*factors(c),'sig2r',base.sig2r*factors(c));
+    write_parameter_chunks(result.chain_dirs{c},estimate,counts(c),testCase.TestData.training,testCase.TestData.priors,cfg);
+end
+factor=sum(counts.*factors)/sum(counts);
+result.parameter_estimate=struct('V',base.V*factor,'sig2h',base.sig2h*factor,'sig2r',base.sig2r*factor);
+result.parameter_draws=sum(counts); result.saved_draws=sum(counts);
 end

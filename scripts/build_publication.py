@@ -10,6 +10,7 @@ import argparse
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -422,7 +423,11 @@ def build(args):
         latexmk = shutil.which("latexmk") or "/Library/TeX/texbin/latexmk"
         env = dict(os.environ)
         env["PATH"] = str(Path(latexmk).parent) + os.pathsep + env.get("PATH", "")
-        stems = ["weekly_correlation_report"] if args.report_only else ["weekly_correlation_report", "weekly_correlation_slides"]
+        stems = ["weekly_correlation_report"]
+        if args.posterior_run is not None:
+            stems.append("weekly_correlation_paths")
+        if not args.report_only:
+            stems.append("weekly_correlation_slides")
         for stem in stems:
             subprocess.run([latexmk, "-pdf", "-interaction=nonstopmode", "-halt-on-error", "-file-line-error",
                             "-outdir=../output/pdf", stem + ".tex"], cwd=ROOT / "research", env=env, check=True)
@@ -462,6 +467,16 @@ def make_bayesian_paths(args, write, figures, data_summary):
     if paths.get("run_dir") and Path(paths["run_dir"]).resolve() != run:
         raise ValueError("Posterior-path manifest belongs to a different sampler run")
     inference = read_inference_metadata(run, sampler, paths, run_manifest, data_summary)
+    convergence_text = saved_convergence_text(run, sampler, inference)
+    chains = int(sampler.get("num_chains", 1))
+    if chains < 1:
+        raise ValueError("Invalid original chain count")
+    if "saved_draws_per_chain" in sampler:
+        counts = sampler["saved_draws_per_chain"]
+        if not isinstance(counts, list):
+            counts = [counts]
+        if len(counts) != chains or sum(counts) != draws:
+            raise ValueError("Per-chain counts disagree with pooled draws")
     selected_source = run / "figures/bayes_correlation_paths_selected.pdf"
     selected_target = figures / "bayesian_paths_selected.pdf"
     shutil.copy2(selected_source, selected_target)
@@ -478,8 +493,9 @@ def make_bayesian_paths(args, write, figures, data_summary):
                      f"\\includegraphics[width=\\linewidth,height={height}\\textheight,keepaspectratio]"
                      f"{{generated/figures/{target.name}}}\n")
     convergence = bool(sampler.get("convergence_established", False))
-    status_text = ("Convergence diagnostics passed." if convergence else
-                   "Convergence has not been established, so the bands are preliminary.")
+    status_text = ("State-chain diagnostics passed; this is not a proof of convergence." if convergence else
+                   "State-chain convergence has not been established, so the bands are preliminary.")
+    status_text += convergence_text
     scope_text = ""
     band_text = "68\\% posterior bands from the saved run; they are not simultaneous bands."
     if inference:
@@ -519,7 +535,8 @@ def make_bayesian_paths(args, write, figures, data_summary):
     write("bayesian_paths.tex",
           "\\section{Bayesian correlation paths}\n"
           + scope_text +
-          f"The selected sampler run retained {draws:,} draws after {warmup:,} warm-up iterations. "
+          f"The selected sampler run retained {draws:,} draws pooled across {chains} original chain(s), "
+          f"after discarding {warmup:,} warm-up iterations per chain. "
           "The dark line is the posterior median of the actual correlation $P_{ij,t}$ and the gray envelope "
           "contains the pointwise 16th and 84th percentiles. Vertical colors use the same continuous scale "
           "as Figure~1: blue for negative values, white near zero, and red for positive values, with intensity "
@@ -531,13 +548,17 @@ def make_bayesian_paths(args, write, figures, data_summary):
           + band_text + "}\n"
           "\\end{figure}\n"
           "\\clearpage\n"
-          "\\subsection{All 91 Bayesian correlation paths}\n"
-          "The following pages use the same vertical scale, color scale, and posterior summaries for every pair.\n" +
+          "\\textbf{Companion figure file.} The complete set of 91 Bayesian correlation paths is generated as "
+          "\\texttt{weekly\\_correlation\\_paths.pdf}. Each page uses the same vertical scale, color scale, "
+          "and posterior summaries for every pair.\\par\n"
+          "\\clearpage\n")
+    write("bayesian_paths_all.tex",
           "".join(pages) + "\\clearpage\n")
     result = {
         "run_dir": str(run),
         "retained_draws": draws,
         "warmup_iterations": warmup,
+        "num_chains": chains,
         "convergence_established": convergence,
         "summary_sha256": hashlib.sha256(summary_path.read_bytes()).hexdigest(),
         "paths_manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
@@ -548,6 +569,65 @@ def make_bayesian_paths(args, write, figures, data_summary):
         result["inference_metadata_sha256"] = hashlib.sha256((run / "inference_metadata.json").read_bytes()).hexdigest()
         result["run_manifest_sha256"] = hashlib.sha256(run_manifest_path.read_bytes()).hexdigest()
     return result
+
+
+def saved_convergence_text(run, sampler, inference):
+    """Use recorded diagnostics, keeping parameter and state checks separate."""
+    report = sampler.get("convergence")
+    if report is None:
+        if sampler.get("convergence_established", False):
+            raise ValueError("Passing convergence flag has no supporting diagnostic report")
+        return ""
+    diagnostic_path = run / "convergence_diagnostics.json"
+    if not diagnostic_path.is_file() or json.loads(diagnostic_path.read_text()) != report:
+        raise ValueError("Saved convergence diagnostics disagree with sampler summary")
+    validate_diagnostic_summary(report)
+    if report["passed"] != sampler.get("convergence_established", False):
+        raise ValueError("Convergence status and sampler flag disagree")
+    if inference and inference.get("state_convergence") != report:
+        raise ValueError("Inference state diagnostics disagree with sampler summary")
+    text = ""
+    if inference and "estimation_convergence" in inference:
+        estimate = inference["estimation_convergence"]
+        validate_diagnostic_summary(estimate)
+        text += " Parameter-estimation diagnostic status: " + tex(estimate["status"]) + "."
+    text += " State-smoothing diagnostic status: " + tex(report["status"]) + "."
+    if report.get("quantities_checked", 0):
+        def metric(key):
+            value = report.get(key)
+            return f"{value:.4g}" if isinstance(value, (int, float)) and math.isfinite(value) else "unavailable"
+        text += (f" Across {report['quantities_checked']:,} checked quantities, maximum rank-normalized "
+                 f"split $\\widehat R$: {metric('max_rhat')}; minimum bulk/tail effective sample sizes: "
+                 f"{metric('min_ess_bulk')}/{metric('min_ess_tail')}; maximum mean Monte Carlo error "
+                 f"relative to sample standard deviation: {metric('max_mcse_sd_ratio')}.")
+    if report.get("reason"):
+        text += " " + tex(report["reason"])
+    return text
+
+
+def validate_diagnostic_summary(report):
+    allowed = {"not_checked", "insufficient_draws", "insufficient_chains", "failed", "passed"}
+    if (not isinstance(report, dict) or report.get("status") not in allowed or
+            type(report.get("passed")) is not bool or report["passed"] != (report["status"] == "passed")):
+        raise ValueError("Invalid convergence diagnostic status")
+    if not report["passed"]:
+        return
+    try:
+        counts = report["actual_draws_per_chain"]
+        thresholds = report["thresholds"]
+        values = [report[key] for key in ["max_rhat", "min_ess_bulk", "min_ess_tail", "max_mcse_sd_ratio"]]
+        valid = (report["chains"] >= 4 and len(counts) == report["chains"] and
+                 len(set(counts)) == 1 and min(counts) == report["draws_per_chain"] and
+                 min(counts) >= thresholds["min_draws"] and report["quantities_checked"] > 0 and
+                 not report["failing_quantities"] and not report["unavailable_quantities"] and report["scope"] and
+                 all(isinstance(x, (int, float)) and math.isfinite(x) for x in values) and
+                 1 < thresholds["rhat"] and 0 < thresholds["ess"] and 0 < thresholds["mcse_ratio"] and
+                 values[0] < thresholds["rhat"] and min(values[1:3]) >= thresholds["ess"] and
+                 0 <= values[3] <= thresholds["mcse_ratio"])
+    except (KeyError, TypeError, ValueError):
+        valid = False
+    if not valid:
+        raise ValueError("Passing convergence diagnostics do not satisfy their recorded criteria")
 
 
 def read_inference_metadata(run, sampler, paths, run_manifest, data_summary):
@@ -643,6 +723,60 @@ def pilot_evidence_paths(pilot_path, folder):
     }
 
 
+def sampler_iteration_seconds(pilot, n):
+    """Mean sampler time per completed iteration, excluding storage/report overhead."""
+    if n is None or not n:
+        return None
+    for key in ("mean_iteration_seconds", "seconds_per_iteration", "meanIterationSeconds", "mean_sweep_seconds"):
+        value = pilot.get(key)
+        if value is not None:
+            return float(value)
+    stage = pilot.get("stage_seconds", {})
+    if isinstance(stage, dict):
+        excluded = {"elapsed", "diagnostics", "checkpoint", "storage", "report"}
+        sampler_seconds = sum(float(value) for key, value in stage.items()
+                              if key not in excluded and isinstance(value, (int, float)))
+        if sampler_seconds > 0:
+            return sampler_seconds / float(n)
+    elapsed = pilot.get("stage_elapsed_seconds", pilot.get("elapsed_seconds",
+                 pilot.get("wall_seconds", pilot.get("elapsedSeconds",
+                 pilot.get("session_seconds", pilot.get("total_seconds"))))))
+    return float(elapsed) / float(n) if elapsed is not None else None
+
+
+def convergence_diagnostic_text(run, pilot):
+    """Summarize the saved convergence diagnostic for the run table."""
+    report = None
+    diagnostic_path = run / "convergence_diagnostics.json"
+    if diagnostic_path.is_file():
+        report = json.loads(diagnostic_path.read_text())
+    elif isinstance(pilot.get("convergence"), dict):
+        report = pilot["convergence"]
+    if not report:
+        return "\\textbf{Convergence diagnostics.} No saved diagnostic report was supplied.\\par\n"
+    validate_diagnostic_summary(report)
+    status = tex(report.get("status", "not_checked"))
+    reason = tex(report.get("reason", ""))
+    text = f"\\textbf{{Convergence diagnostics.}} Status: {status}."
+    if report.get("quantities_checked", 0):
+        def metric(key):
+            value = report.get(key)
+            return f"{value:.4g}" if isinstance(value, (int, float)) and math.isfinite(value) else "unavailable"
+        actual = report.get("actual_draws_per_chain", [])
+        if actual:
+            text += " Retained draws by chain: " + tex(", ".join(str(x) for x in actual)) + "."
+        text += (f" Aligned diagnostic draws per chain: {report.get('draws_per_chain', 0)}; "
+                 f"checked quantities: {report['quantities_checked']:,}; "
+                 f"maximum rank-normalized split $\\widehat R$: {metric('max_rhat')}; "
+                 f"minimum bulk/tail ESS: {metric('min_ess_bulk')}/{metric('min_ess_tail')}; "
+                 f"maximum MCSE/SD: {metric('max_mcse_sd_ratio')}.")
+    if reason:
+        text += " " + reason
+    if not report.get("passed", False):
+        text += " Convergence is not established."
+    return text + "\\par\n"
+
+
 def make_pilot(args, write, folder):
     """Only report recorded pilot values; absent results stay explicitly unavailable."""
     priorfile = selected_prior_summary(args.pilot, folder)
@@ -710,23 +844,28 @@ def make_pilot(args, write, folder):
                 return pilot[key]
         return default
     n = get("completed_iterations", "iterations_completed", "completedIterations")
-    elapsed = get("elapsed_seconds", "wall_seconds", "elapsedSeconds", "session_seconds", "total_seconds")
-    per = get("mean_iteration_seconds", "seconds_per_iteration", "meanIterationSeconds", "mean_sweep_seconds")
+    elapsed = get("stage_elapsed_seconds", "elapsed_seconds", "wall_seconds", "elapsedSeconds", "session_seconds", "total_seconds")
     if n is None or elapsed is None:
         raise ValueError("Pilot summary needs completed_iterations and elapsed_seconds")
-    if per is None:
-        per = float(elapsed) / n if n else None
+    per = sampler_iteration_seconds(pilot, n)
     reason = get("stop_reason", "reason", "status", default="bounded pilot")
     status = get("status", default="bounded_pilot")
     compact_status = {"time_limit": "Time cap reached", "iteration_limit": "Iteration cap reached",
+                      "retained_draw_limit": "Retained-draw cap reached", "converged": "Diagnostics passed",
                       "failed": "Numerical failure", "bounded_pilot": "Bounded pilot"}.get(status, "See recorded reason")
     rows = [["Completed iterations", str(n)], ["Retained posterior draws", str(get("saved_draws", default=0))],
             ["Elapsed wall time", f"{float(elapsed)/60:.2f} minutes"],
             ["Mean time per completed iteration", f"{float(per):.2f} seconds" if n and per is not None else "Unavailable"], ["Stop status", compact_status]]
+    if get("num_chains", default=1) > 1:
+        rows[0][0] = "Completed iterations (sum across chains)"
+        rows[1][0] = "Retained posterior draws (pooled)"
+        rows.insert(0, ["Independent chains", str(get("num_chains"))])
+        rows.append(["Warm-up iterations per chain", str(get("burnin"))])
     if excluded:
         rows[:0] = [["Initial-prior weeks excluded", str(excluded)],
                     ["Weekly returns in the likelihood", str(modeled_summary["n_returns"])],
                     ["Model sample", tex(modeled_summary["first_return"] + " to " + modeled_summary["last_return"])]]
+    run_rows = [row[:] for row in rows]
     if get("r_proposals") is not None:
         rows.append(["Correlation / volatility proposals", f"{get('r_proposals'):,} / {get('h_proposals', default=0):,}"])
     resource_text = "Peak resident process memory was not measured."
@@ -772,15 +911,18 @@ def make_pilot(args, write, folder):
             storage.append([label, f"{float(get(key)):.2f} GiB"])
     storagetex = table(["Analytical array/storage estimate", "Size"], storage) if storage else ""
     stage = get("stage_seconds", default={})
+    # Coordinator wall time overlaps its summed chain timings; it must not
+    # be added a second time when computing the correlation-work fraction.
+    chain_seconds = sum(value for key, value in stage.items() if key not in {"elapsed", "diagnostics"})
     stage_text = ""
-    if stage and sum(stage.values()) > 0:
+    if stage and chain_seconds > 0:
         correlation_seconds = float(stage.get("correlation", 0))
-        correlation_fraction = 100 * correlation_seconds / sum(stage.values())
+        correlation_fraction = 100 * correlation_seconds / chain_seconds
         stage_text = (
             "The slow part of the pilot is the Bayesian correlation step. "
             "At each iteration, the sampler turns proposed correlation states into weekly "
             "correlation matrices and evaluates the likelihood of the observed returns. "
-            f"This step used {correlation_fraction:.1f}\\% of the recorded sampler time "
+            f"This step used {correlation_fraction:.1f}\\% of the summed per-chain timings "
             f"({correlation_seconds:.2f} seconds). "
         )
         if not accelerated:
@@ -835,11 +977,10 @@ def make_pilot(args, write, folder):
         maximum_error = max(likelihood["absolute_errors"].values())
         validation_text += ("A separate likelihood check gives the same result from MATLAB and the compiled backend, "
                             "up to numerical rounding.\\par\n")
-    write("pilot.tex", table(["Measured pilot quantity", "Value"], rows,
-                             align=r"p{.58\linewidth}p{.34\linewidth}") + storagetex +
-          "\\textbf{Recorded stop reason:} " + tex(reason) + "\\par\n" +
-          stage_text)
-    slide_rows = [row for row in rows if not row[0].startswith(("Sampled RSS", "Peak MATLAB"))][:6]
+    write("pilot.tex", table(["Run quantity", "Value"], run_rows,
+                             align=r"p{.58\linewidth}p{.34\linewidth}") +
+          convergence_diagnostic_text(args.pilot.parent, pilot))
+    slide_rows = run_rows[:6]
     sampled = [row for row in rows if row[0].startswith("Sampled RSS")]
     if peak_rss is not None:
         slide_rows.append(["Peak MATLAB process RSS", f"{float(peak_rss):.3f} GiB"])

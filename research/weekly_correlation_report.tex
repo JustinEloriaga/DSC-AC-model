@@ -36,7 +36,7 @@ Currency basis & Native quotes as supplied\\
 Estimator status & Descriptive results plus a saved sampler run\\\bottomrule
 \end{tabular}
 \vfill
-\textbf{Reading guide.} The rolling correlations in this report are empirical estimates. The saved MATLAB run supplies the Bayesian path figures and computational measurements. Unless the reported diagnostics establish otherwise, its draws remain preliminary. Full-sample smoothing and empirical-Bayes calibration use future information relative to an individual historical week.
+\textbf{Reading guide.} The rolling correlations in this report are empirical estimates. The saved MATLAB run supplies the computational measurements. Unless the reported diagnostics establish otherwise, its draws remain preliminary. Full-sample smoothing and empirical-Bayes calibration use future information relative to an individual historical week.
 \vspace{10mm}
 \par September 2026
 \end{titlepage}
@@ -104,54 +104,10 @@ B_1 &\sim \Normal(\bar B,4\bar V_B),
 & r_{k0}\mid\sigma_{r,k}^2 &\sim\Normal(\bar r_k,10\sigma_{r,k}^2),
 \quad k=1,\ldots,q.
 \end{align}
-Here $m=14$, $q=91$, and $h_{j0},r_{k0}$ are pre-sample states. Prior blocks are independent; initial volatility and correlation states are conditionally independent given their innovation variances. Hyperparameter definitions and empirical-Bayes calibration are in Appendix~\ref{app:priors}.
-\section{MATLAB implementation and sampler run}
-\subsection{Changes relative to the repository's original workflow}
-The weekly workflow replaces the hard-coded four-series loader, the monthly assumptions, and fixed plotting labels with a common panel and explicit configuration. Calibration length is independent of likelihood sample length. Return construction happens once, using weekly endpoints; the old sum-of-returns aggregation is unsuitable for the supplied levels. The $p=0$ implementation avoids the previous double lag trimming and explicitly leaves a full VAR(1) outside this stage.
-
-Exact Gaussian random-walk simulation replaces dense $T\times T$ Cholesky factors by a cumulative sum of independent innovations plus the initial-state draw. Coordinate-wise elliptical slice sampling preserves the Gaussian prior while updating log-volatility and matrix-log correlation coordinates \citep{murray2010}. Reusable likelihood terms are cached. The Archakov-Hansen map converts proposed correlation coordinates into $P_t$; implementation safeguards only handle numerical reconstruction failures or non-finite likelihood values. Nonconvergent reconstruction is never silently accepted.
-
-Chain-specific files preserve input hash, dates, labels, configuration, random-number state, and checkpoints. Chunked MAT-v7.3 draw storage keeps distinct correlations rather than redundant symmetric matrices. Burn-in exclusion applies per chain; chains remain separate. Earlier runs are not deleted. The report identifies the exact saved run and records whether convergence has been established.
+Here $m=14$, $q=91$, and $h_{j0},r_{k0}$ are pre-sample states. Prior blocks are independent; initial volatility and correlation states are conditionally independent given their innovation variances. Hyperparameter definitions and empirical-Bayes calibration are recorded in the saved run artifacts.
+\section{Sampler run}
+This section records the saved sampler run used for the current report. The run stopped at the configured time cap, so convergence is reported from the saved diagnostics rather than inferred from completion.
 \input{generated/pilot.tex}
-\input{generated/bayesian_paths.tex}
 \bibliographystyle{plainnat}
 \bibliography{references}
-\clearpage
-\appendix
-\section{Empirical-Bayes prior calibration}
-\label{app:priors}
-Let $N_0$ be the complete-row count among the first 104 weekly returns. Define the maximum-likelihood covariance $S_{\mathrm{ML}}$ and its five-percent diagonal shrinkage:
-\begin{equation}
-S_0=.95S_{\mathrm{ML}}+.05\diag(S_{\mathrm{ML}}),\quad
-\bar B=\bar y_0,\quad \bar V_B=S_0/N_0.
-\end{equation}
-The mean-state priors use
-\begin{equation}
-B_1\sim\Normal(\bar B,4\bar V_B),\qquad
-V\sim IW(V_{0B},\nu_B),\quad V_{0B}=N_0\bar V_B k_B^2,\quad\nu_B=N_0,\quad k_B=.01.
-\end{equation}
-The initial mean $B_1$ is independent of $V$, and mean-state innovations begin at $t=2$. During parameter estimation, the conditional inverse-Wishart update uses the mean increments within the estimation sample. With $T_{\mathrm{est}}$ estimation dates, these are $T_{\mathrm{est}}-1$ increments. During fixed-parameter smoothing, $V$ is held at its saved estimate. Under this scale convention, the prior mean is $V_{0B}/(\nu_B-m-1)$, when it exists, and the mode is $V_{0B}/(\nu_B+m+1)$. These labels are distinct. Initial state means are $\bar h=\log\diag S_0$ for log variances and $\bar r=\vect(\log\operatorname{Corr}(S_0))$ for correlation coordinates.
-
-For each state family, rolling covariance estimates use 104-week windows and five-percent shrinkage. Differences of rolling log variances or matrix-log correlation coordinates estimate evolution variability. The common prior mean in each family is the median of the coordinate-specific difference variances. The inverse-gamma hyperparameters are $a_h=a_r=10$, $b_h=9\bar\sigma_h^2$, and $b_r=9\bar\sigma_r^2$, so $E[\sigma^2]=b/(a-1)=\bar\sigma^2$. The calibration also reports 52- and 156-week sensitivity.
-
-Conditional on its innovation variance, each volatility or correlation coordinate has a pre-sample state $z_0$ with variance $10\sigma^2$ and follows a Gaussian random walk. Its first observed-date state $z_1$ therefore has variance $11\sigma^2$. Accordingly,
-\begin{equation}
-\operatorname{Cov}(z_t,z_u)=\sigma^2\{10+\min(t,u)\},\qquad t,u=1,\ldots,T.
-\end{equation}
-The selected run's calibration and likelihood periods are recorded below. In the current workflow, model time starts after the reserved initial-prior period; those initial observations do not enter either the estimation or smoothing likelihood. Rolling statistics through the parameter-estimation cutoff continue to inform the evolution priors and may include observations also used in estimation. Later observations enter state smoothing without recalibrating saved priors. This empirical-Bayes calibration can understate prior-calibration uncertainty.
-\input{generated/prior_sensitivity.tex}
-\clearpage
-\section{All 91 pairwise correlation paths}
-Each page shows trailing 52-week (navy) and 104-week (teal) Pearson estimates. The vertical scale is fixed at $[-1,1]$ across every panel. Labels show exact ticker abbreviations from the source, omitting only the common ``Index'' suffix for space. Canonical pair indices match the exported numerical data. \figsource
-\input{generated/all_pairs.tex}
-\clearpage
-\section{Complete stationarity diagnostics}
-\label{app:stationarity}
-The machine-readable output contains each statistic, lag, sample count, p-value bound, deterministic specification, and rejection decision. A reported boundary p-value is a bound from MATLAB's tabulated approximation, not an exact probability. The detailed listing preserves all tested specifications. The Transform column identifies log levels versus percentage weekly log returns. ARD means an ADF constant-only specification; TS adds a deterministic trend. For KPSS, Model ``level'' means the constant-mean stationarity null, even when Transform is ``return''. Reject refers to the test's own null: a unit root for ADF and stationarity for KPSS \citep{mathworksadf,mathworkskpss}. Table~\ref{tab:return-stationarity} presents the return ADF results in the main text.
-\input{generated/stationarity_findings.tex}
-The three return KPSS rejections alongside ADF unit-root rejection leave mean instability or breaks as possibilities to investigate. Unit-root rejection does not establish strict stationarity or constant second moments. All diagnostics retain the baseline as-of marks, including the flagged closure returns. Return KPSS uses all 1,204 observations; the common ADF lag comparison uses 1,190. Log-level KPSS and ADF use 1,205 and 1,191 observations, respectively.
-\subsection{What return dependence means for the model}
-\input{generated/dependence_findings.tex}
-\subsection{Full stationarity test listing}
-\input{generated/stationarity_full.tex}
 \end{document}

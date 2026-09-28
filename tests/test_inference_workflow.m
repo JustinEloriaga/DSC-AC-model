@@ -73,7 +73,7 @@ verifyEqual(testCase,nnz(cp.identity.mask),22);
 cp=verify_likelihood_rows(testCase,first.paths.checkpoint,panel,17:32);
 verifyEqual(testCase,nnz(cp.identity.mask),46);
 stored=load(first.paths.parameters,'parameters');
-verifyEqual(testCase,stored.parameters.schema_version,3);
+verifyEqual(testCase,stored.parameters.schema_version,4);
 verifyTrue(testCase,isfield(stored.parameters,'parameter_draws'));
 verifyEqual(testCase,stored.parameters.training_dates,panel.dates(17:24));
 verifyEqual(testCase,cp.state.V,stored.parameters.parameter_estimate.V);
@@ -197,6 +197,131 @@ cfg.estimation_end_date=date_text(panel.dates(15));
 verifyError(testCase,@()dsc_prepare_inference(panel,cfg),'dsc:EstimationDate');
 cfg.estimation_end_date=''; cfg.parameter_file='arbitrary.mat';
 verifyError(testCase,@()dsc_prepare_inference(panel,cfg),'dsc:InferenceConfig');
+end
+
+function testTwoChainReportEstimateSmoothReloadPosteriorMeans(testCase)
+cfg=convergence_workflow_config(testCase); panel=testCase.TestData.panel;
+cfg.num_chains=2; cfg.convergence_mode='report'; cfg.parameter_smoothing='mean';
+cfg.estimation_end_date=date_text(panel.dates(24));
+[priors,inference]=dsc_prepare_inference(panel,cfg);
+first=dsc_run_inference(panel,priors,cfg,fullfile(cfg.output_root,'two_chain_first'),inference);
+stored=load(first.paths.parameters,'parameters'); parameters=stored.parameters;
+verifyEqual(testCase,parameters.schema_version,4);
+verifyEqual(testCase,parameters.retained_draws,6);
+verifyEqual(testCase,parameters.retained_draws_per_chain,[3 3]);
+verifyEqual(testCase,parameters.parameter_draws.chain_id,[1;1;1;2;2;2]);
+verifyEqual(testCase,first.saved_draws_per_chain,[3 3]);
+verifyEqual(testCase,first.inference.retained_draws_per_chain,[3 3]);
+verifyEqual(testCase,first.inference.parameter_estimation_draws,6);
+verifyEqual(testCase,first.inference.estimation_convergence.status,'insufficient_draws');
+verifyEqual(testCase,first.inference.state_convergence.status,'insufficient_draws');
+verifyEqual(testCase,first.inference.estimation_convergence.draws_per_chain,3);
+verifyEqual(testCase,first.inference.state_convergence.draws_per_chain,3);
+verifyEqual(testCase,first.inference.estimation_convergence.quantities_checked,84);
+verifyEqual(testCase,first.inference.state_convergence.quantities_checked,144);
+verifyFalse(testCase,first.inference.estimation_convergence.passed);
+verifyFalse(testCase,first.inference.state_convergence.passed);
+verifyFalse(testCase,first.inference.parameter_uncertainty_in_bands);
+for c=1:2
+    cp=verify_likelihood_rows(testCase,fullfile(first.chain_dirs{c},'checkpoint.mat'),panel,17:32);
+    verifyEqual(testCase,cp.state.V,parameters.parameter_estimate.V);
+    verifyEqual(testCase,cp.state.sig2h,parameters.parameter_estimate.sig2h);
+    verifyEqual(testCase,cp.state.sig2r,parameters.parameter_estimate.sig2r);
+end
+cfg.estimate_parameters=false; cfg.estimation_end_date=''; cfg.parameter_file=first.paths.parameters;
+[loaded_priors,loaded_inference]=dsc_prepare_inference(panel,cfg);
+second=dsc_run_inference(panel,loaded_priors,cfg,fullfile(cfg.output_root,'two_chain_reload'),loaded_inference);
+verifyEqual(testCase,second.paths.parameters,first.paths.parameters);
+verifyEqual(testCase,second.inference.parameters_estimated_at,first.inference.parameters_estimated_at);
+verifyEqual(testCase,second.inference.estimation_convergence,parameters.convergence);
+verifyEqual(testCase,second.inference.state_convergence.status,'insufficient_draws');
+verifyEqual(testCase,second.saved_draws_per_chain,[3 3]);
+for c=1:2
+    cp=verify_likelihood_rows(testCase,fullfile(second.chain_dirs{c},'checkpoint.mat'),panel,17:32);
+    verifyEqual(testCase,cp.state.V,parameters.parameter_estimate.V);
+    verifyEqual(testCase,cp.state.sig2h,parameters.parameter_estimate.sig2h);
+    verifyEqual(testCase,cp.state.sig2r,parameters.parameter_estimate.sig2r);
+end
+verifyEqual(testCase,numel(dir(fullfile(inference.parameter_dir,'dsc_parameters_*.mat'))),1);
+end
+
+function testReportModeContinuesAfterFailedEstimationDiagnostics(testCase)
+cfg=convergence_workflow_config(testCase); panel=testCase.TestData.panel;
+cfg.num_chains=4; cfg.convergence_mode='report'; cfg.parameter_smoothing='mean';
+[priors,inference]=dsc_prepare_inference(panel,cfg);
+run_dir=fullfile(cfg.output_root,'report_failed_estimation');
+result=dsc_run_inference(panel,priors,cfg,run_dir,inference);
+verifyTrue(testCase,isfile(result.paths.parameters));
+diagnostic=jsondecode(fileread(fullfile(run_dir,'estimation','convergence_diagnostics.json')));
+verifyEqual(testCase,diagnostic.status,'insufficient_draws'); verifyFalse(testCase,diagnostic.passed);
+verifyEqual(testCase,diagnostic.actual_draws_per_chain(:),[3;3;3;3]);
+verifyEqual(testCase,result.inference.estimation_convergence.status,'insufficient_draws');
+verifyEqual(testCase,result.inference.state_convergence.status,'insufficient_draws');
+verifyEqual(testCase,result.saved_draws_per_chain,[3 3 3 3]);
+for c=1:4
+    cp_path=fullfile(run_dir,'estimation','chains',sprintf('chain_%03d',c),'checkpoint.mat');
+    verifyTrue(testCase,isfile(cp_path)); loaded=load(cp_path,'checkpoint');
+    verifyEqual(testCase,loaded.checkpoint.completed,4); verifyEqual(testCase,loaded.checkpoint.saved,3);
+end
+verifyTrue(testCase,isfolder(fullfile(run_dir,'chains')));
+verifyTrue(testCase,isfile(fullfile(run_dir,'inference_metadata.json')));
+verifyTrue(testCase,isfile(fullfile(run_dir,'result.mat')));
+end
+
+function testOffModeAndReportModeContinueWithUndiagnosedLoad(testCase)
+cfg=convergence_workflow_config(testCase); panel=testCase.TestData.panel;
+cfg.convergence_mode='off'; cfg.parameter_smoothing='mean';
+[priors,inference]=dsc_prepare_inference(panel,cfg);
+result=dsc_run_inference(panel,priors,cfg,fullfile(cfg.output_root,'off'),inference);
+verifyTrue(testCase,isfile(result.paths.parameters));
+stored=load(result.paths.parameters,'parameters'); original=stored.parameters;
+verifyEqual(testCase,original.schema_version,4); verifyFalse(testCase,original.convergence_established);
+verifyEqual(testCase,original.convergence.status,'not_checked');
+verifyEqual(testCase,result.inference.estimation_convergence.status,'not_checked');
+verifyEqual(testCase,result.inference.state_convergence.status,'not_checked');
+verifyEqual(testCase,original.retained_draws,3); verifyEqual(testCase,result.saved_draws_per_chain,3);
+cfg.convergence_mode='report'; cfg.num_chains=4; cfg.estimate_parameters=false;
+cfg.parameter_file=result.paths.parameters;
+[loaded_priors,loaded_inference]=dsc_prepare_inference(panel,cfg);
+loaded_dir=fullfile(cfg.output_root,'report_undiagnosed_load');
+loaded_result=dsc_run_inference(panel,loaded_priors,cfg,loaded_dir,loaded_inference);
+verifyTrue(testCase,isfile(loaded_result.paths.result));
+verifyEqual(testCase,loaded_result.inference.estimation_convergence.status,'not_checked');
+verifyEqual(testCase,loaded_result.inference.state_convergence.status,'insufficient_draws');
+stored=load(result.paths.parameters,'parameters'); verifyEqual(testCase,stored.parameters,original);
+verifyEqual(testCase,numel(dir(fullfile(inference.parameter_dir,'dsc_parameters_*.mat'))),1);
+% Conditional draw cycling is reported as not_checked but still completes.
+cfg.parameter_smoothing='draws';
+[loaded_priors,loaded_inference]=dsc_prepare_inference(panel,cfg);
+draws_dir=fullfile(cfg.output_root,'report_undiagnosed_draws');
+draws_result=dsc_run_inference(panel,loaded_priors,cfg,draws_dir,loaded_inference);
+verifyTrue(testCase,isfile(draws_result.paths.result));
+verifyEqual(testCase,draws_result.inference.estimation_convergence.status,'not_checked');
+verifyEqual(testCase,draws_result.inference.state_convergence.status,'not_checked');
+verifyTrue(testCase,contains(draws_result.inference.state_convergence.reason,'conditional transition kernel'));
+end
+
+function testUnsupportedConvergenceModeRejectedBeforeInferenceWrites(testCase)
+cfg=convergence_workflow_config(testCase); panel=testCase.TestData.panel;
+cfg.convergence_mode='required';
+[priors,inference]=dsc_prepare_inference(panel,cfg);
+run_dir=fullfile(cfg.output_root,'unsupported_mode');
+verifyError(testCase,@()dsc_run_inference(panel,priors,cfg,run_dir,inference), ...
+    'MATLAB:unrecognizedStringChoice');
+verifyFalse(testCase,isfolder(run_dir));
+verifyEmpty(testCase,dir(fullfile(inference.parameter_dir,'dsc_parameters_*.mat')));
+end
+
+function testPublicEntryRejectsRemovedModeBeforeDataAccess(testCase)
+verifyError(testCase,@()run_weekly_model_report(ConvergenceMode="required", ...
+    SourceFile="/missing/source.csv",RunTests=false,BuildReport=false,VerifyReport=false), ...
+    'MATLAB:validators:mustBeMember');
+end
+
+function cfg=convergence_workflow_config(testCase)
+cfg=testCase.TestData.cfg; cfg.output_root=tempname; mkdir(cfg.output_root);
+testCase.addTeardown(@()rmdir(cfg.output_root,'s'));
+cfg.parallel_chains=false; cfg.auto_extend=false;
 end
 
 function checkpoint=verify_likelihood_rows(testCase,path,panel,rows)
