@@ -745,7 +745,7 @@ def sampler_iteration_seconds(pilot, n):
 
 
 def convergence_diagnostic_text(run, pilot):
-    """Summarize the saved convergence diagnostic for the run table."""
+    """Summarize the saved convergence diagnostic for the diagnostics section."""
     report = None
     diagnostic_path = run / "convergence_diagnostics.json"
     if diagnostic_path.is_file():
@@ -753,23 +753,42 @@ def convergence_diagnostic_text(run, pilot):
     elif isinstance(pilot.get("convergence"), dict):
         report = pilot["convergence"]
     if not report:
-        return "\\textbf{Convergence diagnostics.} No saved diagnostic report was supplied.\\par\n"
+        return "No saved convergence diagnostic report was supplied.\\par\n"
     validate_diagnostic_summary(report)
     status = tex(report.get("status", "not_checked"))
     reason = tex(report.get("reason", ""))
-    text = f"\\textbf{{Convergence diagnostics.}} Status: {status}."
+    def metric(key):
+        value = report.get(key)
+        return f"{value:.4g}" if isinstance(value, (int, float)) and math.isfinite(value) else "Unavailable"
+    def passfail(good):
+        return "Pass" if good else "Fail"
+    thresholds = report.get("thresholds", {})
+    rhat_threshold = float(thresholds.get("rhat", thresholds.get("rhat_threshold", 1.01)))
+    ess_threshold = float(thresholds.get("ess", thresholds.get("min_ess", 400)))
+    mcse_threshold = float(thresholds.get("mcse_ratio", thresholds.get("max_mcse_ratio", 0.05)))
+    max_rhat = report.get("max_rhat")
+    min_bulk = report.get("min_ess_bulk")
+    min_tail = report.get("min_ess_tail")
+    max_mcse = report.get("max_mcse_sd_ratio")
+    rows = [
+        [r"Maximum rank-normalized split $\widehat R$", f"$< {rhat_threshold:.2f}$",
+         metric("max_rhat"), passfail(isinstance(max_rhat, (int, float)) and max_rhat < rhat_threshold)],
+        ["Minimum bulk ESS", f"$\\geq {ess_threshold:.0f}$",
+         metric("min_ess_bulk"), passfail(isinstance(min_bulk, (int, float)) and min_bulk >= ess_threshold)],
+        ["Minimum tail ESS", f"$\\geq {ess_threshold:.0f}$",
+         metric("min_ess_tail"), passfail(isinstance(min_tail, (int, float)) and min_tail >= ess_threshold)],
+        ["Maximum MCSE/SD", f"$\\leq {mcse_threshold:.2f}$",
+         metric("max_mcse_sd_ratio"), passfail(isinstance(max_mcse, (int, float)) and max_mcse <= mcse_threshold)],
+    ]
+    text = table(["Diagnostic", "Reference value", "Observed", "Result"], rows,
+                 align=r"p{.38\linewidth}p{.18\linewidth}p{.18\linewidth}p{.14\linewidth}")
+    text += f"Overall diagnostic status: {status}."
     if report.get("quantities_checked", 0):
-        def metric(key):
-            value = report.get(key)
-            return f"{value:.4g}" if isinstance(value, (int, float)) and math.isfinite(value) else "unavailable"
         actual = report.get("actual_draws_per_chain", [])
         if actual:
             text += " Retained draws by chain: " + tex(", ".join(str(x) for x in actual)) + "."
         text += (f" Aligned diagnostic draws per chain: {report.get('draws_per_chain', 0)}; "
-                 f"checked quantities: {report['quantities_checked']:,}; "
-                 f"maximum rank-normalized split $\\widehat R$: {metric('max_rhat')}; "
-                 f"minimum bulk/tail ESS: {metric('min_ess_bulk')}/{metric('min_ess_tail')}; "
-                 f"maximum MCSE/SD: {metric('max_mcse_sd_ratio')}.")
+                 f"checked quantities: {report['quantities_checked']:,}.")
     if reason:
         text += " " + reason
     if not report.get("passed", False):
@@ -801,6 +820,7 @@ def make_pilot(args, write, folder):
     if args.pilot is None:
         write("pilot_executive.tex", "No pilot summary was supplied, so the production cost remains unassessed.\n")
         write("pilot.tex", "No pilot summary was supplied to this build. Bayesian timing, memory and posterior results are unavailable.\n")
+        write("convergence_diagnostics.tex", "No sampler run was supplied, so convergence diagnostics are unavailable.\n")
         write("slides_pilot.tex", "No pilot summary supplied. Numerical results and computational timing are unavailable in this build.\n")
         write("production.tex", "A production cost recommendation requires a completed, measured pilot.\n")
         write("slides_production.tex", "The production decision requires a measured pilot and a review of model diagnostics.\n")
@@ -978,8 +998,8 @@ def make_pilot(args, write, folder):
         validation_text += ("A separate likelihood check gives the same result from MATLAB and the compiled backend, "
                             "up to numerical rounding.\\par\n")
     write("pilot.tex", table(["Run quantity", "Value"], run_rows,
-                             align=r"p{.58\linewidth}p{.34\linewidth}") +
-          convergence_diagnostic_text(args.pilot.parent, pilot))
+                             align=r"p{.58\linewidth}p{.34\linewidth}"))
+    write("convergence_diagnostics.tex", convergence_diagnostic_text(args.pilot.parent, pilot))
     slide_rows = run_rows[:6]
     sampled = [row for row in rows if row[0].startswith("Sampled RSS")]
     if peak_rss is not None:

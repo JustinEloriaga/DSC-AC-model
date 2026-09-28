@@ -108,6 +108,10 @@ Here $m=14$, $q=91$, and $h_{j0},r_{k0}$ are pre-sample states. Prior blocks are
 \section{Sampler run}
 This section records the saved sampler run used for the current report. The run stopped at the configured time cap, so convergence is reported from the saved diagnostics rather than inferred from completion.
 \input{generated/pilot.tex}
+\clearpage
+\section{Run diagnostics}
+This section reports the saved convergence diagnostics for the sampler run. The reference values are diagnostic thresholds for judging whether independently initialized chains agree well enough for the reported posterior summaries.
+\input{generated/convergence_diagnostics.tex}
 \bibliographystyle{plainnat}
 \bibliography{references}
 \end{document}
