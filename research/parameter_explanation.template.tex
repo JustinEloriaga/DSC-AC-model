@@ -1,0 +1,317 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern,geometry,amsmath,amssymb,booktabs,array,xcolor,fancyhdr,pgfplots}
+\usepackage[colorlinks=true,urlcolor=prior,linkcolor=prior]{hyperref}
+\pgfplotsset{compat=1.18}
+\geometry{left=19mm,right=19mm,top=21mm,bottom=20mm,headheight=14pt}
+\definecolor{ink}{HTML}{20363D}
+\definecolor{prior}{HTML}{147D83}
+\definecolor{posterior}{HTML}{C24931}
+\definecolor{chainone}{HTML}{147D83}
+\definecolor{chaintwo}{HTML}{C24931}
+\definecolor{chainthree}{HTML}{8263A8}
+\definecolor{chainfour}{HTML}{8C751F}
+\pagestyle{fancy}\fancyhf{}
+\fancyhead[L]{\small\color{ink}DSC--AC / Priors and posteriors}
+\fancyhead[R]{\small 27 September 2026}
+\fancyfoot[L]{\scriptsize Saved-run comparisons: convergence unverified}
+\fancyfoot[R]{\small\thepage}
+\setlength{\parindent}{0pt}\setlength{\parskip}{5pt}
+\setlength{\emergencystretch}{2em}
+\newcommand{\Normal}{\mathcal N}
+\newcommand{\IG}{\operatorname{IG}}
+\newcommand{\IW}{\operatorname{IW}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\vecl}{\operatorname{vecl}}
+\newcommand{\E}{\operatorname E}
+\begin{document}
+{\color{ink}\LARGE\bfseries Parameter priors and posteriors\par}
+{\large The joint weekly dynamic stochastic correlation model\par}
+\medskip
+\textbf{What this document shows.} The prior specifies plausible parameter values before the
+estimation likelihood is applied. The posterior updates that distribution using the observed
+returns. This report gives the actual prior definitions, derives the conditional posterior
+updates, and compares the priors with saved parameter draws from this repository.
+
+\textbf{The current evidence is preliminary.} The latest saved estimation contains
+\textbf{@@DRAWCOUNT@@ retained draws from four chains} (@@COUNTS@@).
+The run stopped at its 12-hour time limit; its convergence record says \texttt{not\_checked}
+because the diagnostic time budget was exhausted. The plots are therefore visualizations
+of saved draws intended to approximate the posterior, not a validated posterior estimate.
+No new MCMC run was launched to produce this document.
+
+\section*{1. Which quantities are parameters?}
+For 14 weekly percentage log returns, with no VAR lags ($p=0$), the observation model is
+\begin{align*}
+y_t\mid B_t,h_t,r_t &\sim\Normal(B_t,H_t),\\
+H_t&=D_tP_tD_t,\qquad D_t=\diag\{\exp(h_{1t}/2),\ldots,\exp(h_{14,t}/2)\},\\
+r_t&=\vecl(\log P_t)\in\mathbb R^{91}.
+\end{align*}
+The logarithm here is a \emph{matrix logarithm}; $r_t$ is not a vector of ordinary
+correlations. The Archakov--Hansen inverse map produces the positive-definite correlation
+matrix $P_t$ with unit diagonal [1].
+
+\begin{tabular*}{\linewidth}{@{\extracolsep{\fill}}p{31mm}p{85mm}r@{}}\toprule
+Quantity & Meaning & Distinct entries\\\midrule
+$V$ & Covariance of weekly changes in expected returns $B_t$ & 105\\
+$\sigma_{h,j}^2$ & Variance of changes in log variance, one per series & 14\\
+$\sigma_{r,k}^2$ & Variance of changes in a matrix-log coordinate & 91\\\midrule
+Fixed parameters & $\theta=(V,\sigma_h^2,\sigma_r^2)$ & 210\\
+Weekly latent states & $B_t$, $h_t$, and $r_t$ & 119 per week\\\bottomrule
+\end{tabular*}
+
+\textbf{Interpretation.} Larger evolution variances allow less smooth latent paths.
+The volatility parameter $\sigma_{h,j}^2$ is not the return variance $\exp(h_{jt})$.
+Likewise, $V$ concerns changes in the mean, not the contemporaneous return covariance $H_t$.
+
+\section*{2. What data are used?}
+The first 104 returns, @@CALSTART@@ to @@CALEND@@, calibrate initial-state priors and are
+excluded from the likelihood. The selected estimation likelihood covers \textbf{@@T@@ weeks},
+@@MODELSTART@@ to @@MODELEND@@. Evolution-prior scales use rolling windows through that
+estimation cutoff, including likelihood observations. This is empirical Bayes: the
+hyperparameters are fitted to data and subsequently held fixed. Their calibration
+uncertainty is not propagated. Historical state estimates are full-sample smoothers.
+
+\clearpage
+\section*{3. The priors actually used}
+Let $N_0=104$ be the complete-row count in the reserved calibration block, $S_{\rm ML}$ its
+maximum-likelihood covariance, and $S_0=.95S_{\rm ML}+.05\diag(S_{\rm ML})$.
+The initial centers are
+\[
+\bar B=\bar y_0,\qquad \bar V_B=S_0/N_0,\qquad
+\bar h=\log\diag(S_0),\qquad \bar r=\vecl\{\log\operatorname{Corr}(S_0)\}.
+\]
+\textbf{Mean states and their innovation covariance.}
+\begin{align*}
+B_1&\sim\Normal(\bar B,4\bar V_B),\qquad B_1\perp V,\\
+B_t\mid B_{t-1},V&\sim\Normal(B_{t-1},V),\quad t=2,\ldots,T,\\
+V&\sim\IW(\Psi_0,\nu_0),\quad
+\Psi_0=N_0\bar V_B(0.01)^2=10^{-4}S_0,\quad\nu_0=104.
+\end{align*}
+The convention is $p(V)\propto |V|^{-(\nu_0+m+1)/2}
+\exp\{-\tfrac12\operatorname{tr}(\Psi_0V^{-1})\}$, with $m=14$.
+Thus $\E[V]=\Psi_0/89$, while the joint mode is $\Psi_0/119$ [2].
+The diagonal marginal is $V_{jj}\sim\IG(45.5,\Psi_{0,jj}/2)$; the off-diagonal entries
+are jointly constrained by positive definiteness and may be negative.
+
+\textbf{Volatility states and their innovation variances.} For each $j=1,\ldots,14$:
+\begin{align*}
+h_{j1}\mid\sigma_{h,j}^2
+&\sim\Normal(\bar h_j,11\sigma_{h,j}^2),\\
+h_{jt}\mid h_{j,t-1},\sigma_{h,j}^2
+&\sim\Normal(h_{j,t-1},\sigma_{h,j}^2),\quad t=2,\ldots,T,\\
+\sigma_{h,j}^2&\sim\IG(a,b_h),\quad a=10,\quad b_h=@@HSCALE@@.
+\end{align*}
+\textbf{Correlation-coordinate states and their innovation variances.} For each $k=1,\ldots,91$:
+\begin{align*}
+r_{k1}\mid\sigma_{r,k}^2
+&\sim\Normal(\bar r_k,11\sigma_{r,k}^2),\\
+r_{kt}\mid r_{k,t-1},\sigma_{r,k}^2
+&\sim\Normal(r_{k,t-1},\sigma_{r,k}^2),\quad t=2,\ldots,T,\\
+\sigma_{r,k}^2&\sim\IG(a,b_r),\quad a=10,\quad b_r=@@RSCALE@@.
+\end{align*}
+Each block follows the same order as $B_t$: first-state prior, law of motion, innovation-variance prior.
+Unlike $B_1\perp V$, the priors for $h_{j1}$ and $r_{k1}$ depend on their innovation variances.
+Innovations are independent across dates and coordinates, conditional on their variances.
+The innovation-variance priors are independent within and across the two families.
+Here the \emph{shape--scale} density and its moments are
+\[
+p(s)=\frac{b^a}{\Gamma(a)}s^{-(a+1)}e^{-b/s},\quad s>0;\qquad
+\E[s]=\frac b{a-1},\quad\operatorname{mode}(s)=\frac b{a+1}.
+\]
+The calibrated means are $\E[\sigma_h^2]=@@HMEAN@@$ and
+$\E[\sigma_r^2]=@@RMEAN@@$. Each prior has coefficient of variation
+$1/\sqrt{a-2}=0.354$. A common prior does not force the coordinate-specific posterior values
+to be equal. The scale $b$ is not the prior mean.
+
+\textbf{How we obtain the priors for $h_0$ and $f_0\equiv r_0$.}
+This report denotes the correlation-coordinate state by $r_t$; equivalently, $f_0=r_0$.
+From the same reserved 104-return block, form $S_0$ as above and set
+\[
+D_S=\diag\{\sqrt{S_{0,11}},\ldots,\sqrt{S_{0,14,14}}\},\qquad
+C_0=D_S^{-1}S_0D_S^{-1}.
+\]
+Then the coordinate-specific initial-state priors are
+\begin{align*}
+h_{j0}\mid\sigma_{h,j}^2&\sim\Normal(\bar h_j,10\sigma_{h,j}^2),
+&\bar h_j&=\log S_{0,jj},\\
+r_{k0}\mid\sigma_{r,k}^2&\sim\Normal(\bar r_k,10\sigma_{r,k}^2),
+&\bar r_k&=[\vecl(\log C_0)]_k.
+\end{align*}
+To calculate $\log C_0$, diagonalize $C_0=Q\Lambda Q'$ and use
+$Q\diag(\log\lambda_1,\ldots,\log\lambda_{14})Q'$; retain its strict lower triangle
+in column-major order. Calibration fixes the centers $\bar h$ and $\bar r$;
+the pre-sample states $h_0$ and $r_0$ remain random, conditionally independent given
+their innovation variances.
+
+For either coordinate $z$ with innovation variance $s$ and prior center $\mu$, integrating
+out $z_0$ gives $\operatorname{Var}(z_1\mid s)=10s+s=11s$, explaining the first-state priors above.
+The path covariance is $\operatorname{Cov}(z_t,z_u\mid s)=s\{10+\min(t,u)\}$.
+The marginal prior for $z_t$ is Student-$t$ with 20 degrees of freedom, location $\mu$,
+and scale $\sqrt{b(10+t)/a}$; its standard deviation is $\sqrt{(10+t)b/(a-1)}$.
+
+\textbf{How the evolution scales were calibrated.} For each rolling window, the code
+differences rolling log variances and matrix-log coordinates, takes each coordinate's
+sample variance, then the median across coordinates. The selected window is 104 weeks.
+\begin{center}\small
+\begin{tabular}{rrr}\toprule
+Window (weeks) & Log-variance innovation mean & Coordinate innovation mean\\\midrule
+@@CALIBRATION@@
+\bottomrule\end{tabular}\end{center}
+
+\clearpage
+\section*{4. From the prior to the posterior}
+Let $x=(B_{1:T},h_{1:T},r_{1:T})$ and let $\hat\lambda$ denote the fixed empirical-Bayes
+hyperparameters. Bayes' rule gives
+\[
+p(\theta,x\mid y,\hat\lambda)\ \propto\
+\underbrace{\prod_{t=1}^T\Normal(y_t;B_t,D_tP_tD_t)}_{\text{observation likelihood}}
+\underbrace{p(x\mid\theta,\hat\lambda)p(\theta\mid\hat\lambda)}_{\text{state and parameter priors}}.
+\]
+With missing values the likelihood uses the observed subvector and covariance submatrix.
+The desired parameter posterior is $p(\theta\mid y,\hat\lambda)=
+\int p(\theta,x\mid y,\hat\lambda)\,dx$. This integration has no simple closed-form answer.
+MCMC approximates it by sampling states and parameters repeatedly.
+
+\textbf{Conditional posterior for $V$.} Set $\Delta B_t=B_t-B_{t-1}$. Conditional on
+the sampled mean path,
+\[
+\boxed{V\mid B_{1:T},y,\ldots\sim
+\IW\left(\Psi_0+\sum_{t=2}^T\Delta B_t\Delta B_t',\;\nu_0+T-1\right).}
+\]
+For the selected $T=@@T@@$, the degrees of freedom are @@POSTDF@@.
+There are $T-1$ increments because the $B_1$ prior is independent of $V$.
+The marginal posterior of $V$ averages these inverse-Wishart conditionals over uncertain
+mean paths; it is generally a mixture, not a single inverse-Wishart distribution.
+
+\textbf{Conditional posterior for either innovation variance $s$.}
+The integrated random-walk density contributes $T$ Gaussian terms: the initial state
+with variance $11s$ and $T-1$ changes with variance $s$. Therefore
+\[
+\boxed{s\mid z_{1:T},y,\ldots\sim\IG\left(a+\frac T2,\;
+b+\frac12\left[\frac{(z_1-\mu)^2}{11}+
+\sum_{t=2}^T(z_t-z_{t-1})^2\right]\right).}
+\]
+Use $(z,\mu,b)=(h_j,\bar h_j,b_h)$ or $(r_k,\bar r_k,b_r)$.
+The shape is @@POSTSHAPE@@ for this sample. The marginal posterior again integrates
+over uncertain paths; fitting one inverse-gamma density to all saved draws is unnecessary.
+
+\textbf{How this matches the sampler.} The current \texttt{draw\_variances} function uses
+an independence Metropolis--Hastings step. It proposes from
+$\IG(a+(T-1)/2,b+\tfrac12\sum_{t=2}^T\Delta z_t^2)$ and accepts with probability
+\[
+\min\left\{1,\left(\frac{s'}s\right)^{-1/2}
+\exp\left[-\frac{(z_1-\mu)^2}{22}\left(\frac1{s'}-\frac1s\right)\right]\right\}.
+\]
+That correction includes the initial-state density and targets the boxed conditional.
+The proposal distribution alone is not the full conditional posterior.
+
+\textbf{Conditional posteriors for the latent paths.}
+Given $h,r,V$, $B_{1:T}\mid y,h,r,V$ is multivariate Gaussian and is sampled with a
+Kalman filter and backward simulation. The $h_j$ and $r_k$ path conditionals are
+non-Gaussian because they enter the covariance nonlinearly; their Gaussian random-walk
+priors are combined with the observation likelihood using elliptical slice updates [3].
+Correlations and volatilities are obtained draw by draw as $P_t=\mathcal C(r_t)$ and
+$\exp(h_{jt}/2)$, before summarizing. In general, transforming a posterior mean is not
+the same as taking the posterior mean of a transformed quantity.
+
+\clearpage
+\section*{5. Prior versus saved-draw distributions}
+\textcolor{prior}{\textbf{Teal: exact prior density.}}\quad
+\textcolor{posterior}{\textbf{Red: preliminary saved-draw density.}}
+Each horizontal axis divides the parameter by its own prior mean; 1 is the prior mean.
+All @@DRAWCOUNT@@ retained draws are pooled, so longer chains receive slightly more weight.
+The red line is a kernel density estimate on the log scale, transformed back to this
+positive scale with its Jacobian. These are marginal distributions, not state paths.
+\par\medskip
+@@DENSITIES@@
+\par\medskip
+\textbf{How to read a shift.} A red curve to the left describes smaller evolution
+variances in the saved draws, hence smoother states. A narrower red curve describes less
+dispersion in these draws. Neither feature proves correct mixing or convergence.
+The two selected pairs illustrate familiar FX and equity labels; the appendix includes
+every fixed parameter, so the examples are not the full evidence.
+
+\clearpage
+\section*{6. What the current comparison can establish}
+The saved-draw means for all 14 log-variance innovation variances are
+@@HMINRATIO@@--@@HMAXRATIO@@ times their common prior mean. Across the 91 correlation-coordinate
+innovation variances, the corresponding ratios are @@RMINRATIO@@--@@RMAXRATIO@@.
+These describe the current chains; they are not established posterior findings.
+\begin{center}\small
+\begin{tabular}{lrrr}\toprule
+Example & Prior mean & Saved-draw mean & Ratio\\\midrule
+@@COMPARISONS@@
+\bottomrule\end{tabular}\end{center}
+\textbf{Chain identity matters.} The traces below preserve each chain and show only retained
+iterations after the configured 20-iteration burn-in. The colors denote chains
+\textcolor{chainone}{1}, \textcolor{chaintwo}{2}, \textcolor{chainthree}{3}, and
+\textcolor{chainfour}{4}. Similar pooled densities can conceal different chain locations.
+\par\smallskip
+@@TRACES@@
+\par\smallskip
+\textbf{Should the prior and posterior match?} There is no requirement that they match,
+or that every posterior must be narrower. Similarity can mean weak information about a
+parameter or agreement with the prior. A shift may reflect learning, prior conflict, or
+sampling problems; its interpretation requires diagnostics and sensitivity checks.
+
+\textbf{Before treating draw percentiles as credible intervals:} the repository's target
+is four independent chains, rank-normalized split/folded $\widehat R<1.01$, bulk and tail
+ESS at least 400, and mean MCSE/posterior-SD at most 0.05 for reported quantities [4].
+The saved diagnostic record contains no usable values for these metrics. The 20-iteration
+burn-in setting is a retention rule, not evidence that warm-up was sufficient. Passing
+diagnostics would still leave prior sensitivity and model adequacy to assess.
+
+\clearpage
+\section*{7. Initial-state priors and reproducibility}
+The following centers come from the reserved first 104 weekly returns.
+The $B_1$ entries are percentage points of weekly expected return; its prior SD is
+$2\sqrt{\bar V_{B,jj}}$. The log-variance centers use percentage-return units.
+\begin{center}\small
+\begin{tabular}{lrrr}\toprule
+Series & $\bar B_j$ & Prior SD of $B_{j1}$ & $\bar h_j$\\\midrule
+@@INITIALROWS@@
+\bottomrule\end{tabular}\end{center}
+The $B_1$ prior is multivariate, with covariance $4\bar V_B$, not 14 independent normals.
+For $h_1$ and $r_1$, the marginal priors follow the Student-$t$ expression on page 2.
+For $P_{ij,t}$ there is an induced joint prior obtained by mapping the entire $r_t$ vector;
+assigning independent priors to ordinary pairwise correlations would change this model.
+
+\textbf{Fixed-parameter smoothing is a different output.} When
+\texttt{estimate\_parameters=false}, the workflow uses saved parameter means or saved
+parameter draws while updating latent states. This is not a new estimation of
+$p(\theta\mid y)$. Holding means fixed excludes parameter uncertainty; reusing saved
+draws includes their variation but does not reweight them into an updated parameter
+posterior when new observations arrive.
+
+\textbf{Saved evidence.} Parameter file, estimated at @@ESTIMATEDAT@@:
+\par{\footnotesize\nolinkurl{@@PARAMETERFILE@@}}
+\par Run: {\footnotesize\nolinkurl{@@RUNDIR@@/estimation}}.
+\par Source SHA-256: {\scriptsize\nolinkurl{@@SOURCEHASH@@}}.
+The companion numerical CSV contains prior moments and retained-draw means and quantiles
+for all 210 parameters. Its manifest records file hashes, chain counts, and validation
+of positive definiteness, draw counts, and agreement with the saved parameter means.
+
+\textbf{Implementation sources.}\par
+{\footnotesize\begin{tabular}{@{}ll@{}}
+\nolinkurl{toolbox/dsc_calibrate_priors.m} & Defines the priors\\
+\nolinkurl{toolbox/dsc_prepare_inference.m} & Splits calibration and likelihood dates\\
+\nolinkurl{toolbox/dsc_sample.m} & Implements the posterior updates\\
+\nolinkurl{toolbox/dsc_save_parameters.m} & Preserves draws and chain IDs\\
+\nolinkurl{scripts/build_parameter_explanation.py} & Generates this document\\
+\end{tabular}}
+\par The generated LaTeX is self-contained and has no external figure dependencies.
+
+\textbf{Methodological references.}\par
+{\footnotesize
+[1] Archakov and Hansen (2021). \emph{A New Parametrization of Correlation Matrices}.
+\href{https://arxiv.org/abs/2012.02395}{Paper and reconstruction method}.\par
+[2] MathWorks. \emph{iwishrnd}: inverse-Wishart parameterization and expectation.
+\href{https://www.mathworks.com/help/stats/iwishrnd.html}{Official documentation}.\par
+[3] Murray, Adams and MacKay (2010). \emph{Elliptical Slice Sampling}.
+\href{https://proceedings.mlr.press/v9/murray10a.html}{PMLR 9, 541--548}.\par
+[4] Vehtari et al. (2021). \emph{Rank-Normalization, Folding, and Localization}.
+\href{https://arxiv.org/abs/1903.08008}{Bayesian Analysis 16, 667--718}.
+}
+@@APPENDIX@@
+\end{document}

@@ -3,17 +3,27 @@ function result = run_weekly_model_report(options)
 % Example:
 %   result = run_weekly_model_report(WarmupIterations=10,RetainedDraws=100);
 %
-% RetainedDraws is the number of draws written after warm-up and thinning.
+% RetainedDraws is the number of draws per chain after warm-up and thinning.
 % The sampler therefore performs WarmupIterations + RetainedDraws*Thin
 % completed sweeps unless MaxHours stops it first.
 arguments
     options.WarmupIterations (1,1) double {mustBeInteger,mustBeNonnegative} = 10
     options.RetainedDraws (1,1) double {mustBeInteger,mustBeGreaterThanOrEqual(options.RetainedDraws,2)} = 100
     options.Thin (1,1) double {mustBeInteger,mustBePositive} = 1
-    options.MaxHours (1,1) double {mustBePositive,mustBeFinite} = 2
+    options.MaxHours (1,1) double {mustBePositive,mustBeFinite} = 12
     options.ChunkSize (1,1) double {mustBeInteger,mustBePositive} = 10
     options.Seed (1,1) double {mustBeInteger,mustBeNonnegative} = 20260914
     options.ChainID (1,1) double {mustBeInteger,mustBePositive} = 1
+    options.NumChains (1,1) double {mustBeInteger,mustBePositive} = 1
+    options.ParallelChains (1,1) logical = false
+    options.ConvergenceMode (1,1) string {mustBeMember(options.ConvergenceMode,["off","report"])} = "report"
+    options.AutoExtend (1,1) logical = false
+    options.CheckEvery (1,1) double {mustBeInteger,mustBePositive} = 250
+    options.MaxRetainedDraws (1,1) double {mustBeInteger,mustBeGreaterThanOrEqual(options.MaxRetainedDraws,2)} = 2000
+    options.MinDiagnosticDraws (1,1) double {mustBeInteger,mustBeGreaterThanOrEqual(options.MinDiagnosticDraws,6)} = 100
+    options.RhatThreshold (1,1) double {mustBeGreaterThan(options.RhatThreshold,1),mustBeFinite} = 1.01
+    options.MinESS (1,1) double {mustBePositive,mustBeFinite} = 400
+    options.MaxMCSERatio (1,1) double {mustBePositive,mustBeFinite} = 0.05
     options.CorrelationBackend (1,1) string {mustBeMember(options.CorrelationBackend,["auto","mex","matlab"])} = "auto"
     options.CorrelationThreads (1,1) double {mustBeInteger,mustBeGreaterThanOrEqual(options.CorrelationThreads,1),mustBeLessThanOrEqual(options.CorrelationThreads,64)} = 4
     options.SourceFile (1,1) string = ""
@@ -48,6 +58,16 @@ cfg.max_seconds = options.MaxHours*3600;
 cfg.chunk_size = options.ChunkSize;
 cfg.seed = options.Seed;
 cfg.chain_id = options.ChainID;
+cfg.num_chains = options.NumChains;
+cfg.parallel_chains = options.ParallelChains;
+cfg.convergence_mode = char(options.ConvergenceMode);
+cfg.auto_extend = options.AutoExtend;
+cfg.check_every = options.CheckEvery;
+cfg.max_retained_draws = options.MaxRetainedDraws;
+cfg.min_diagnostic_draws = options.MinDiagnosticDraws;
+cfg.rhat_threshold = options.RhatThreshold;
+cfg.min_ess = options.MinESS;
+cfg.max_mcse_ratio = options.MaxMCSERatio;
 cfg.resume = false;
 cfg.correlation_backend = char(options.CorrelationBackend);
 cfg.correlation_threads = options.CorrelationThreads;
@@ -56,6 +76,14 @@ cfg.estimation_end_date = char(options.EstimationEndDate);
 cfg.parameter_dir = char(options.ParameterDirectory);
 cfg.parameter_file = char(options.ParameterFile);
 cfg.parameter_smoothing = char(options.ParameterSmoothing);
+
+% Reject unsupported execution settings before data preparation or sampling.
+if cfg.auto_extend&&(strcmp(cfg.convergence_mode,'off')||cfg.max_retained_draws<options.RetainedDraws)
+    error('dsc:ConvergenceConfig','AutoExtend needs convergence checking and MaxRetainedDraws >= RetainedDraws.');
+end
+if cfg.parallel_chains&&~dsc_parallel_available()
+    error('dsc:ParallelUnavailable','ParallelChains=true requires Parallel Computing Toolbox and an available license. Use ParallelChains=false for sequential chains.');
+end
 
 if options.RunTests
     run_weekly_acceptance(cfg);
@@ -71,6 +99,9 @@ run_manifest.run_kind = 'configurable sampler and report pipeline';
 run_manifest.requested_warmup_iterations = options.WarmupIterations;
 run_manifest.requested_retained_draws = options.RetainedDraws;
 run_manifest.requested_total_sweeps = cfg.max_iterations;
+run_manifest.requested_num_chains = cfg.num_chains;
+run_manifest.parallel_chains = cfg.parallel_chains;
+run_manifest.convergence_mode = cfg.convergence_mode;
 run_manifest.requested_max_hours = options.MaxHours;
 run_manifest.convergence_established = false;
 write_json_local(fullfile(run_dir,'run_manifest.json'),run_manifest);
@@ -81,10 +112,10 @@ if result.saved_draws < 2
         ['The run was preserved at %s, but it retained only %d draw(s). ' ...
          'Increase MaxHours or reduce WarmupIterations.'],run_dir,result.saved_draws);
 end
-if result.saved_draws < options.RetainedDraws
+if any(result.saved_draws_per_chain < options.RetainedDraws)
     warning('DSC:IncompleteDrawTarget', ...
-        'The time limit retained %d of %d requested draws; the report records this.', ...
-        result.saved_draws,options.RetainedDraws);
+        'Some chains retained fewer than %d requested draws each; %d draws were retained in total.', ...
+        options.RetainedDraws,result.saved_draws);
 end
 
 result.figure_paths = plot_bayes_correlation_paths(run_dir);
@@ -118,6 +149,9 @@ latest = struct('run_dir',run_dir,'summary',fullfile(run_dir,'pilot_summary.json
     'warmup_iterations',cfg.burnin,'thin',cfg.thin,'completed_iterations',result.completed_iterations, ...
     'status',result.status,'created_at',char(datetime('now','Format','yyyy-MM-dd''T''HH:mm:ss')));
 latest.inference=result.inference;
+latest.num_chains=cfg.num_chains;
+latest.actual_retained_draws_per_chain=result.saved_draws_per_chain;
+latest.convergence=result.convergence;
 write_json_local(fullfile(cfg.output_root,'latest_model_report.json'),latest);
 end
 

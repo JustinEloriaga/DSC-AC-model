@@ -21,6 +21,13 @@ if ~isequal(priors.tickers,panel.tickers)||~isequal(priors.source_hash,panel.sou
 end
 if ~isfield(cfg,'chain_id'), cfg.chain_id=1; end
 if ~isfield(cfg,'resume'), cfg.resume=false; end
+if ~isfield(cfg,'randomize_initial_state'), cfg.randomize_initial_state=false; end
+if ~isscalar(cfg.randomize_initial_state)|| ...
+        ~(islogical(cfg.randomize_initial_state)||isnumeric(cfg.randomize_initial_state))|| ...
+        ~isreal(cfg.randomize_initial_state)||~ismember(cfg.randomize_initial_state,[0 1])
+    error('dsc:SamplerConfig','randomize_initial_state must be true or false.');
+end
+cfg.randomize_initial_state=logical(cfg.randomize_initial_state);
 if ~isfield(cfg,'estimate_parameters'), cfg.estimate_parameters=true; end
 if ~isfield(cfg,'parameter_smoothing')||strlength(string(cfg.parameter_smoothing))==0
     cfg.parameter_smoothing='mean';
@@ -76,7 +83,7 @@ end
 if ~exist(run_dir,'dir'), mkdir(run_dir); end
 checkpoint_path=fullfile(run_dir,'checkpoint.mat');
 fixed_cfg=cfg;
-for field={'max_iterations','max_seconds','resume','output_root'}
+for field={'max_iterations','max_seconds','resume','output_root','resume_validate_only','resume_finalize_only'}
     if isfield(fixed_cfg,field{1}), fixed_cfg=rmfield(fixed_cfg,field{1}); end
 end
 identity=struct('dates',panel.dates,'tickers',panel.tickers,'returns',Y, ...
@@ -97,6 +104,14 @@ if cfg.resume
     if ~exist(checkpoint_path,'file'), error('dsc:ResumeMissing','Checkpoint does not exist.'); end
     loaded=load(checkpoint_path,'checkpoint'); cp=loaded.checkpoint;
     if ~isequaln(cp.identity,identity), error('dsc:ResumeMismatch','Panel, priors or fixed configuration differs.'); end
+    % The coordinator must validate every resumed chain even if its existing
+    % draws already meet this call's target or its stage budget has expired.
+    % Return before restoring RNG or writing anything for this read-only path.
+    if isfield(cfg,'resume_validate_only')&&cfg.resume_validate_only
+        result=struct('completed_iterations',cp.completed,'saved_draws',cp.saved, ...
+            'total_seconds',cp.total_seconds);
+        return
+    end
     state=cp.state; rng(cp.rng); completed=cp.completed; saved=cp.saved;
     next_chunk=cp.next_chunk; buffer=cp.buffer; diagnostics=cp.diagnostics;
     parameter_sums=cp.parameter_sums;
@@ -118,6 +133,9 @@ else
         state.sig2h=cfg.fixed_parameters.sig2h;
         state.sig2r=cfg.fixed_parameters.sig2r;
     end
+    if cfg.randomize_initial_state
+        state=dispersed_initial_state(state,priors,cfg.estimate_parameters,T,m,nr);
+    end
     completed=0; saved=0; next_chunk=1; buffer=empty_buffer;
     parameter_sums=struct('V',zeros(m,m),'sig2h',zeros(1,m), ...
         'sig2r',zeros(1,nr),'count',0);
@@ -136,8 +154,11 @@ unfinished_stage=''; unfinished_sweep_seconds=0;
 % Initial cache contains no random draws. Even a tiny budget receives a valid
 % zero-sweep checkpoint and explicit time_limit status from the loop below.
 cache=build_cache(state.r,obs,m,cfg.correlation_backend,mask,cfg.correlation_threads,@() []);
+if cfg.randomize_initial_state&&~isfinite(cached_likelihood(Y-state.B,state.h,cache,obs))
+    error('dsc:InitialLikelihood','Dispersed initial state has a nonfinite log likelihood.');
+end
 if ~cfg.resume, commit_checkpoint(); end
-while completed<cfg.max_iterations
+while completed<cfg.max_iterations&&~(isfield(cfg,'resume_finalize_only')&&cfg.resume_finalize_only)
     before=state; rng_before=rng; timing_before=timing;
     iteration_clock=tic;
     stage_name='mean';
@@ -246,6 +267,7 @@ if parameter_sums.count>0
 end
 summary=struct('status',status,'reason',stop_reason,'failure_identifier',failure_identifier, ...
     'convergence_established',false,'chain_id',cfg.chain_id,'seed',cfg.seed+cfg.chain_id-1, ...
+    'randomize_initial_state',cfg.randomize_initial_state, ...
     'estimate_parameters',cfg.estimate_parameters,'inference_mode',inference_mode, ...
     'parameter_smoothing',cfg.parameter_smoothing, ...
     'parameter_draws',parameter_sums.count,'parameter_estimate',parameter_estimate, ...
@@ -301,6 +323,37 @@ atomic_save(fullfile(run_dir,'result.mat'),'result',result);
         atomic_save(checkpoint_path,'checkpoint',checkpoint);
         timing.checkpoint=timing.checkpoint+toc(saveclock);
     end
+end
+
+function state=dispersed_initial_state(state,priors,estimate_parameters,T,m,nr)
+% Independently seeded prior parameter draws and bounded state perturbations.
+% These are starting points only: transition priors and all kernels are intact.
+% Long unconditioned random walks can make initial likelihoods numerically
+% unusable, so each path begins at a bounded perturbation of its prior center.
+if estimate_parameters
+    state.V=iwishrnd(priors.V0B,priors.nuB);
+    state.sig2h=1./gamrnd(priors.ig_shape,1/priors.ig_scale_h,1,m);
+    state.sig2r=1./gamrnd(priors.ig_shape,1/priors.ig_scale_r,1,nr);
+end
+state=validate_initial_parameters(state,m,nr);
+L=chol(4*priors.VBbar,'lower');
+B0=priors.Bbar+L*(2*tanh(randn(m,1)/2));
+hscale=min(sqrt((priors.h0_scale+1)*state.sig2h),1);
+rscale=min(sqrt((priors.r0_scale+1)*state.sig2r),.15);
+h0=priors.mh0(:)'+hscale.*tanh(randn(1,m));
+r0=priors.mr0(:)'+rscale.*tanh(randn(1,nr));
+state.B=repmat(B0',T,1);
+state.h=repmat(h0,T,1);
+state.r=repmat(r0,T,1);
+if any(~isfinite([state.B(:);state.h(:);state.r(:)]))
+    error('dsc:InitialState','Dispersed initial states must be finite.');
+end
+end
+
+function state=validate_initial_parameters(state,m,nr)
+parameters=validate_fixed_parameters(struct('V',state.V,'sig2h',state.sig2h, ...
+    'sig2r',state.sig2r),m,nr);
+state.V=parameters.V; state.sig2h=parameters.sig2h; state.sig2r=parameters.sig2r;
 end
 
 function parameters=validate_fixed_parameters(parameters,m,nr)

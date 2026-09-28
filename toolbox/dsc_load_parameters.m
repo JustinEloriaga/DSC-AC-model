@@ -40,6 +40,10 @@ end
 path=char(java.io.File(path).getCanonicalPath());
 validate_bundle(bundle,path);
 validate_panel(bundle,panel,path);
+if bundle.schema_version==3
+    bundle.convergence=struct('status','not_checked','passed',false, ...
+        'reason','Legacy schema 3 did not compute convergence diagnostics.');
+end
 bundle.parameter_estimate.sig2h=bundle.parameter_estimate.sig2h(:)';
 bundle.parameter_estimate.sig2r=bundle.parameter_estimate.sig2r(:)';
 bundle.parameter_draws.sig2h=double(bundle.parameter_draws.sig2h);
@@ -81,7 +85,7 @@ required={'schema_version','model','estimator','estimated_at','estimated_at_posi
 if ~all(isfield(b,required))
     error('dsc:ParametersSchema','Parameter file %s is missing required metadata.',path);
 end
-if ~isequal(b.schema_version,3)||~strcmp(b.model,'joint_dsc_p0')||~strcmp(b.estimator,'posterior_draws')
+if ~ismember(b.schema_version,[3 4])||~strcmp(b.model,'joint_dsc_p0')||~strcmp(b.estimator,'posterior_draws')
     error('dsc:ParametersSchema','Unsupported parameter schema, model or estimator in %s.',path);
 end
 if ~finite_scalar(b.estimated_at_posix)||~is_text_scalar(b.estimated_at)|| ...
@@ -132,8 +136,8 @@ end
 if ~finite_scalar(b.retained_draws)||b.retained_draws<2||b.retained_draws~=floor(b.retained_draws)
     error('dsc:ParametersDraws','Parameter file %s does not contain an estimate from at least two retained draws.',path);
 end
-if ~isequal(b.convergence_established,false)
-    error('dsc:ParametersSchema','Schema 2 does not establish convergence; invalid convergence metadata in %s.',path);
+if b.schema_version==3&&~isequal(b.convergence_established,false)
+    error('dsc:ParametersSchema','Schema 3 does not establish convergence; invalid convergence metadata in %s.',path);
 end
 v=b.parameter_estimate;
 if ~isstruct(v)||~isscalar(v)||~all(isfield(v,{'V','sig2h','sig2r'}))|| ...
@@ -143,6 +147,9 @@ end
 draws=b.parameter_draws;
 if ~valid_parameter_draws(draws,m,nr,b.retained_draws)
     error('dsc:ParametersValues','Parameter file %s must contain retained positive parameter draws.',path);
+end
+if b.schema_version==4
+    validate_chain_provenance(b,path);
 end
 draw_mean=struct('V',mean(draws.V,3),'sig2h',mean(draws.sig2h,1),'sig2r',mean(draws.sig2r,1));
 if max(abs(draw_mean.V(:)-v.V(:)))>1e-10|| ...
@@ -167,6 +174,63 @@ end
 if (isfield(p,'initial_weeks')&&~isequal(p.initial_weeks,b.calibration_weeks))|| ...
         (isfield(p,'initial_dates')&&~isequal(p.initial_dates(:),reshape(b.calibration_dates([1 end]),[],1)))
     error('dsc:ParametersCalibration','Initial-prior window does not match the excluded calibration dates in %s.',path);
+end
+end
+
+function validate_chain_provenance(b,path)
+fields={'chain_ids','chain_seeds','chain_dirs','retained_draws_per_chain','convergence'};
+if ~all(isfield(b,fields))||~all(isfield(b.parameter_draws,{'chain_id','iteration'}))
+    error('dsc:ParametersSchema','Missing chain or diagnostic provenance in %s.',path);
+end
+ids=b.chain_ids(:); counts=b.retained_draws_per_chain(:); seeds=b.chain_seeds(:);
+if isempty(ids)||~finite_vector(ids,numel(ids))||any(ids<1)||any(ids~=floor(ids))|| ...
+        numel(unique(ids))~=numel(ids)||~finite_vector(counts,numel(ids))|| ...
+        any(counts<1)||any(counts~=floor(counts))||sum(counts)~=b.retained_draws|| ...
+        ~finite_vector(seeds,numel(ids))||any(seeds<0)||any(seeds>2^32-1)|| ...
+        any(seeds~=floor(seeds))||numel(unique(seeds))~=numel(seeds)|| ...
+        numel(b.chain_dirs)~=numel(ids)||numel(unique(string(b.chain_dirs)))~=numel(ids)
+    error('dsc:ParametersIdentity','Invalid original chain identities/counts in %s.',path);
+end
+cfg=b.estimation_config;
+if ~all(isfield(cfg,{'seed','burnin','thin'}))|| ...
+        ~finite_scalar(cfg.seed)||cfg.seed<0||cfg.seed>2^32-1||cfg.seed~=floor(cfg.seed)|| ...
+        ~finite_scalar(cfg.burnin)||cfg.burnin<0||cfg.burnin~=floor(cfg.burnin)|| ...
+        ~finite_scalar(cfg.thin)||cfg.thin<1||cfg.thin~=floor(cfg.thin)|| ...
+        any(seeds~=cfg.seed+ids-1)
+    error('dsc:ParametersIdentity','Invalid chain seeds, warm-up or thinning configuration in %s.',path);
+end
+if isfield(cfg,'chain_id')&&(~finite_scalar(cfg.chain_id)||cfg.chain_id<1|| ...
+        cfg.chain_id~=floor(cfg.chain_id)||cfg.chain_id>2^32)
+    error('dsc:ParametersIdentity','Invalid base chain identity in %s.',path);
+end
+if isfield(cfg,'num_chains')
+    if ~finite_scalar(cfg.num_chains)||cfg.num_chains<1||cfg.num_chains~=floor(cfg.num_chains)
+        error('dsc:ParametersIdentity','Invalid configured chain count in %s.',path);
+    end
+    % Explicit coordinator metadata promises consecutive IDs from its base.
+    % Legacy pooling may combine an arbitrary subset of independent chains.
+    if cfg.num_chains>1&&(~isfield(cfg,'chain_id')||cfg.num_chains~=numel(ids)|| ...
+            ~isequal(ids,cfg.chain_id+(0:cfg.num_chains-1)'))
+        error('dsc:ParametersIdentity','Configured chain base/count disagree with original chain identities in %s.',path);
+    end
+end
+draw_ids=b.parameter_draws.chain_id(:); iterations=b.parameter_draws.iteration(:);
+if ~finite_vector(draw_ids,b.retained_draws)||~all(ismember(draw_ids,ids))|| ...
+        ~finite_vector(iterations,b.retained_draws)||any(iterations~=floor(iterations))|| ...
+        ~all(isfield(b.estimation_config,{'burnin','thin'}))
+    error('dsc:ParametersIdentity','Invalid per-draw provenance in %s.',path);
+end
+for c=1:numel(ids)
+    ix=iterations(draw_ids==ids(c));
+    if numel(ix)~=counts(c)||any(diff([b.estimation_config.burnin;ix])~=b.estimation_config.thin)
+        error('dsc:ParametersIdentity','Invalid per-chain retention sequence in %s.',path);
+    end
+end
+m=numel(b.tickers); nr=m*(m-1)/2;
+expected_quantities=numel(b.training_dates)*(2*m+nr)+m*(m+1)/2+m+nr;
+dsc_validate_convergence(b.convergence,ids,counts,expected_quantities);
+if ~isequal(b.convergence_established,b.convergence.passed)
+    error('dsc:ConvergenceMetadata','Parameter convergence flag disagrees with its diagnostic report.');
 end
 end
 

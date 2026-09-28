@@ -117,6 +117,19 @@ class InferencePublicationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Pilot T disagrees"):
             publication.make_pilot(self.args, self.output.__setitem__, folder)
 
+    def test_multichain_timing_does_not_double_count_wall_time(self):
+        self.reserve_initial_weeks()
+        folder = self.pilot_fixture()
+        self.sampler.update(num_chains=4, saved_draws=12, stage_elapsed_seconds=60,
+                            stage_seconds={"correlation": 90, "mean": 10, "elapsed": 60, "diagnostics": 5})
+        self.persist()
+        publication.make_pilot(self.args, self.output.__setitem__, folder)
+        text = self.output["pilot.tex"]
+        for phrase in ["Independent chains & 4", "sum across chains", "1.00 minutes",
+                       "Mean time per completed iteration & 25.00 seconds"]:
+            self.assertIn(phrase, text)
+        self.assertNotIn("summed per-chain timings", text)
+
     def test_fixed_scope_and_provenance_are_published(self):
         manifest = self.build_paths()
         self.assertEqual(manifest["inference"], self.metadata)
@@ -205,6 +218,58 @@ class InferencePublicationTests(unittest.TestCase):
         self.assertEqual(publication.selected_prior_summary(pilot, self.root / "data"), snapshot)
         self.assertIsNone(publication.selected_pilot_summary(None, None))
         self.assertEqual(publication.selected_pilot_summary(self.args.pilot, self.run), self.args.pilot)
+
+    def add_diagnostics(self):
+        report = {"status": "insufficient_draws", "passed": False, "chains": 4,
+                  "quantities_checked": 20, "max_rhat": 1.3, "min_ess_bulk": 12,
+                  "min_ess_tail": 10, "max_mcse_sd_ratio": .2,
+                  "reason": "Not enough retained draws."}
+        self.sampler.update(convergence=report, num_chains=4, saved_draws=12,
+                            saved_draws_per_chain=[3, 3, 3, 3])
+        self.paths["retained_draws"] = 12
+        self.metadata.update(state_convergence=report,
+                             estimation_convergence={"status": "not_checked", "passed": False})
+        self.paths["inference"] = deepcopy(self.metadata)
+        self.manifest["inference"] = deepcopy(self.metadata)
+        self.persist()
+        (self.run / "convergence_diagnostics.json").write_text(json.dumps(report))
+
+    def test_separate_diagnostics_and_chain_counts_are_published(self):
+        self.add_diagnostics()
+        result = self.build_paths()
+        self.assertEqual(result["num_chains"], 4)
+        text = self.output["bayesian_paths.tex"]
+        for phrase in ["4 original chain(s)", "warm-up iterations per chain",
+                       "Parameter-estimation diagnostic status", "State-smoothing diagnostic status",
+                       "maximum rank-normalized", "Not enough retained draws"]:
+            self.assertIn(phrase, text)
+
+    def test_stale_diagnostics_are_rejected_before_copying(self):
+        self.add_diagnostics()
+        stale = deepcopy(self.sampler["convergence"])
+        stale["max_rhat"] = 1.01
+        (self.run / "convergence_diagnostics.json").write_text(json.dumps(stale))
+        with self.assertRaisesRegex(ValueError, "convergence diagnostics disagree"):
+            self.build_paths()
+        self.assertEqual(list(self.figures.iterdir()), [])
+
+    def test_unsupported_passing_flag_is_rejected(self):
+        self.sampler["convergence_established"] = True
+        self.persist()
+        with self.assertRaisesRegex(ValueError, "no supporting"):
+            self.build_paths()
+
+    def test_passing_status_needs_all_recorded_criteria(self):
+        report = {"status": "passed", "passed": True, "chains": 4,
+                  "actual_draws_per_chain": [1000]*4, "draws_per_chain": 1000,
+                  "quantities_checked": 20, "failing_quantities": [], "unavailable_quantities": [],
+                  "scope": "Every parameter and modeled date", "max_rhat": 1.005,
+                  "min_ess_bulk": 850, "min_ess_tail": 750, "max_mcse_sd_ratio": .04,
+                  "thresholds": {"rhat": 1.01, "ess": 400, "min_draws": 100, "mcse_ratio": .05}}
+        publication.validate_diagnostic_summary(report)
+        report["min_ess_tail"] = 5
+        with self.assertRaisesRegex(ValueError, "recorded criteria"):
+            publication.validate_diagnostic_summary(report)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,49 @@
+function dsc_validate_convergence(report,chain_ids,counts,expected_quantities)
+% Validate saved diagnostic metadata, not a mathematical proof of convergence.
+if nargin<4, expected_quantities=[]; end
+allowed={'not_checked','insufficient_draws','insufficient_chains','failed','passed'};
+if ~isstruct(report)||~isscalar(report)||~all(isfield(report,{'status','passed'}))|| ...
+        ~ismember(report.status,allowed)||~islogical(report.passed)||~isscalar(report.passed)|| ...
+        report.passed~=strcmp(report.status,'passed')
+    error('dsc:ConvergenceMetadata','Invalid convergence status or passed flag.');
+end
+if isfield(report,'chains')&&report.chains~=numel(chain_ids)
+    error('dsc:ConvergenceMetadata','Convergence chain count disagrees with draw provenance.');
+end
+if isfield(report,'actual_draws_per_chain')&&~isequal(report.actual_draws_per_chain(:),counts(:))
+    error('dsc:ConvergenceMetadata','Convergence draw counts disagree with draw provenance.');
+end
+if ~report.passed, return; end
+required={'draws_per_chain','actual_draws_per_chain','chains','chain_ids','quantities_checked', ...
+    'max_rhat','min_ess_bulk','min_ess_tail','max_mcse_sd_ratio','thresholds', ...
+    'scope','failing_quantities','unavailable_quantities'};
+if ~all(isfield(report,required))||numel(chain_ids)<4||numel(unique(counts))~=1|| ...
+        ~isequal(report.chain_ids(:),chain_ids(:))|| ...
+        ~isscalar(report.draws_per_chain)||report.draws_per_chain~=min(counts)|| ...
+        ~isnumeric(report.quantities_checked)||~isscalar(report.quantities_checked)|| ...
+        ~isfinite(report.quantities_checked)||report.quantities_checked<1|| ...
+        report.quantities_checked~=floor(report.quantities_checked)|| ...
+        (~isempty(expected_quantities)&&report.quantities_checked~=expected_quantities)|| ...
+        ~isempty(report.failing_quantities)||~isempty(report.unavailable_quantities)||isempty(report.scope)
+    error('dsc:ConvergenceMetadata','Passing diagnostics require four chains, equal covered draws and no failed or unavailable quantities.');
+end
+t=report.thresholds;
+if ~isstruct(t)||~isscalar(t)||~all(isfield(t,{'rhat','ess','mcse_ratio','min_draws'}))
+    error('dsc:ConvergenceMetadata','Passing diagnostics must record all thresholds.');
+end
+metrics={report.max_rhat,report.min_ess_bulk,report.min_ess_tail,report.max_mcse_sd_ratio, ...
+    t.rhat,t.ess,t.mcse_ratio,t.min_draws};
+if ~all(cellfun(@(x)isnumeric(x)&&isscalar(x)&&isfinite(x),metrics))|| ...
+        t.rhat<=1||t.ess<=0||t.mcse_ratio<=0||t.min_draws<6||t.min_draws~=floor(t.min_draws)|| ...
+        report.max_rhat<=0||report.max_rhat>=t.rhat||report.min_ess_bulk<t.ess||report.min_ess_tail<t.ess|| ...
+        report.max_mcse_sd_ratio<0||report.max_mcse_sd_ratio>t.mcse_ratio||min(counts)<t.min_draws
+    error('dsc:ConvergenceMetadata','Passing diagnostics do not meet their recorded thresholds.');
+end
+aliases={'rhat_threshold','min_ess','max_mcse_ratio','min_diagnostic_draws'};
+short={'rhat','ess','mcse_ratio','min_draws'};
+for k=1:numel(aliases)
+    if isfield(t,aliases{k})&&~isequal(t.(aliases{k}),t.(short{k}))
+        error('dsc:ConvergenceMetadata','Recorded diagnostic threshold aliases disagree.');
+    end
+end
+end

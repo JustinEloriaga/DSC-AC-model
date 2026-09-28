@@ -31,6 +31,18 @@ testCase.TestData.folder=folder; testCase.TestData.metadata=metadata;
 testCase.TestData.summary=summary;
 end
 
+function testDiagnosticJsonCopiedWithoutNullOrArrayChanges(testCase)
+folder=testCase.TestData.folder; metadata=testCase.TestData.metadata;
+metadata.estimation_convergence=struct('status','not_checked','passed',false, ...
+    'max_rhat',NaN,'chunk_metadata',{{struct('file','one_chunk.mat')}});
+write_fixture(fullfile(folder,'inference_metadata.json'),metadata);
+write_fixture(fullfile(folder,'run_manifest.json'),struct('source_hash','fixture','inference',metadata));
+plot_bayes_correlation_paths(folder);
+raw=fileread(fullfile(folder,'inference_metadata.json'));
+copy=fileread(fullfile(folder,'figures','bayes_correlation_paths_manifest.json'));
+verifyTrue(testCase,contains(copy,raw));
+end
+
 function testConditionalPathsRecordSavedProvenance(testCase)
 metadata=testCase.TestData.metadata;
 metadata.calibration_weeks=104;
@@ -87,6 +99,98 @@ paths=plot_bayes_correlation_paths(testCase.TestData.folder);
 verifyTrue(testCase,all(isfile(paths)));
 manifest=jsondecode(fileread(fullfile(testCase.TestData.folder,'figures','bayes_correlation_paths_manifest.json')));
 verifyFalse(testCase,isfield(manifest,'inference'));
+end
+
+function testMultipleChainsPoolBandsAndPreserveDrawProvenance(testCase)
+[dirs,expected]=multichain_fixture(testCase);
+paths=plot_bayes_correlation_paths(testCase.TestData.folder);
+verifyTrue(testCase,all(isfile(paths)));
+bands=load(fullfile(testCase.TestData.folder,'posterior_correlation_bands.mat'));
+quantiles=prctile(expected,[16 50 84],3);
+verifyEqual(testCase,bands.lower,quantiles(:,:,1));
+verifyEqual(testCase,bands.median_path,quantiles(:,:,2));
+verifyEqual(testCase,bands.upper,quantiles(:,:,3));
+verifyEqual(testCase,bands.chain_dirs,dirs);
+verifyEqual(testCase,bands.chain_ids,[3 7]);
+verifyEqual(testCase,bands.draw_chain_ids,[3 3 3 7 7]);
+verifyEqual(testCase,bands.iterations,[2 3 4 2 3]);
+verifyEqual(testCase,bands.retained_draws_per_chain,[3 2]);
+verifyEqual(testCase,bands.warmup_per_chain,[1 1]);
+manifest=jsondecode(fileread(fullfile(testCase.TestData.folder,'figures','bayes_correlation_paths_manifest.json')));
+verifyEqual(testCase,manifest.retained_draws,5);
+verifyEqual(testCase,manifest.chain_ids(:),[3;7]);
+verifyEqual(testCase,manifest.retained_draws_per_chain(:),[3;2]);
+verifyEqual(testCase,manifest.draw_chain_ids(:),[3;3;3;7;7]);
+verifyEqual(testCase,manifest.retained_iterations(:),[2;3;4;2;3]);
+verifyEqual(testCase,manifest.warmup_removed_per_chain(:),[1;1]);
+verifyTrue(testCase,contains(manifest.note,'warm-up iterations per chain'));
+end
+
+function testDuplicateChainDirectoriesRejectBeforeExport(testCase)
+[dirs,~]=multichain_fixture(testCase);
+summary=jsondecode(fileread(fullfile(testCase.TestData.folder,'pilot_summary.json')));
+summary.chain_dirs={dirs{1},dirs{1}};
+write_fixture(fullfile(testCase.TestData.folder,'pilot_summary.json'),summary);
+verifyError(testCase,@()plot_bayes_correlation_paths(testCase.TestData.folder),'DSC:PathIdentity');
+verifyFalse(testCase,isfolder(fullfile(testCase.TestData.folder,'figures')));
+end
+
+function testDuplicateChainIdsRejectBeforeExport(testCase)
+[dirs,~]=multichain_fixture(testCase);
+path=fullfile(dirs{2},'posterior_chunk_000001.mat'); loaded=load(path,'chunk');
+chunk=loaded.chunk; chunk.chain_id=3; save(path,'chunk','-v7');
+verifyError(testCase,@()plot_bayes_correlation_paths(testCase.TestData.folder),'DSC:PathIdentity');
+end
+
+function testPerChainCountsMustMatchSummary(testCase)
+multichain_fixture(testCase);
+summary=jsondecode(fileread(fullfile(testCase.TestData.folder,'pilot_summary.json')));
+summary.saved_draws_per_chain=[2 3];
+write_fixture(fullfile(testCase.TestData.folder,'pilot_summary.json'),summary);
+verifyError(testCase,@()plot_bayes_correlation_paths(testCase.TestData.folder),'DSC:PathDraws');
+end
+
+function testIterationsMustIncreaseWithinEachChain(testCase)
+[dirs,~]=multichain_fixture(testCase);
+path=fullfile(dirs{2},'posterior_chunk_000001.mat'); loaded=load(path,'chunk');
+chunk=loaded.chunk; chunk.iterations=[3 2]; save(path,'chunk','-v7');
+verifyError(testCase,@()plot_bayes_correlation_paths(testCase.TestData.folder),'DSC:PathDraws');
+end
+
+function testMultichainDateIdentityMustMatch(testCase)
+[dirs,~]=multichain_fixture(testCase);
+path=fullfile(dirs{2},'posterior_chunk_000001.mat'); loaded=load(path,'chunk');
+chunk=loaded.chunk; chunk.dates=chunk.dates+calweeks(1); save(path,'chunk','-v7');
+verifyError(testCase,@()plot_bayes_correlation_paths(testCase.TestData.folder),'DSC:PathIdentity');
+end
+
+function testCannotLabelConvergedWithoutSavedDiagnostics(testCase)
+multichain_fixture(testCase);
+path=fullfile(testCase.TestData.folder,'pilot_summary.json');
+summary=jsondecode(fileread(path)); summary.convergence_established=true;
+write_fixture(path,summary);
+verifyError(testCase,@()plot_bayes_correlation_paths(testCase.TestData.folder),'DSC:ConvergenceMetadata');
+verifyFalse(testCase,isfolder(fullfile(testCase.TestData.folder,'figures')));
+end
+
+function [dirs,expected]=multichain_fixture(testCase)
+folder=testCase.TestData.folder;
+dirs={fullfile(folder,'chains','chain_001'),fullfile(folder,'chains','chain_002')};
+for c=1:2, mkdir(dirs{c}); end
+loaded=load(fullfile(folder,'posterior_chunk_000001.mat'),'chunk');
+chunk=loaded.chunk; chunk.P_pairs=chunk.P_pairs(:,1,:);
+chunk.tickers=["A","B"]; chunk.pair_i=2; chunk.pair_j=1;
+chunk.chain_id=3; expected=chunk.P_pairs;
+save(fullfile(dirs{1},'posterior_chunk_000001.mat'),'chunk','-v7');
+chunk.chain_id=7; chunk.iterations=[2 3]; chunk.P_pairs=chunk.P_pairs(:,:,1:2)+.1;
+expected=cat(3,expected,chunk.P_pairs);
+save(fullfile(dirs{2},'posterior_chunk_000001.mat'),'chunk','-v7');
+% The coordinator summary is authoritative; root chunks belong to the legacy
+% fixture and must not accidentally be included in this pooled run.
+summary=testCase.TestData.summary;
+summary.chain_dirs=dirs; summary.chain_ids=[3 7]; summary.saved_draws=5;
+summary.saved_draws_per_chain=[3 2]; summary.num_chains=2;
+write_fixture(fullfile(folder,'pilot_summary.json'),summary);
 end
 
 function write_fixture(path,value)

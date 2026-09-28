@@ -71,13 +71,13 @@ parameter_dir=char(java.io.File(parameter_dir).getCanonicalPath());
 % Round once to milliseconds so ISO and epoch timestamps describe one instant.
 epoch=round(posixtime(datetime('now','TimeZone','UTC'))*1000)/1000;
 estimated=datetime(epoch,'ConvertFrom','posixtime','TimeZone','UTC');
-draws=collect_parameter_draws(result.run_dir,count,numel(panel.tickers),numel(panel.pair_i));
+[draws,chain_ids,chain_counts,chain_dirs,seeds]=collect_parameter_draws(result,count,panel,priors,cfg);
 estimate=parameter_draw_mean(draws);
 if ~isempty(result.parameter_estimate)&&~estimates_close(canonical_estimate(result.parameter_estimate),estimate)
     error('dsc:ParametersValues','Saved posterior chunks disagree with the sampler parameter estimate.');
 end
 parameters=struct();
-parameters.schema_version=3;
+parameters.schema_version=4;
 parameters.model='joint_dsc_p0';
 parameters.estimator='posterior_draws';
 parameters.estimated_at=char(string(estimated,"yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"));
@@ -101,17 +101,28 @@ parameters.priors=priors;
 parameters.parameter_draws=draws;
 parameters.parameter_estimate=estimate;
 parameters.retained_draws=count;
+parameters.chain_ids=chain_ids;
+parameters.chain_dirs=chain_dirs;
+parameters.chain_seeds=seeds;
+parameters.retained_draws_per_chain=chain_counts;
 parameters.estimation_status=result.status;
 if isfield(result,'completed_iterations'), parameters.completed_iterations=result.completed_iterations; end
 if isfield(result,'implementation'), parameters.implementation=result.implementation; end
 if all(isfield(cfg,{'max_iterations','burnin','thin'}))
-    parameters.requested_retained_draws=floor((cfg.max_iterations-cfg.burnin)/cfg.thin);
+    parameters.requested_retained_draws=numel(chain_ids)*floor((cfg.max_iterations-cfg.burnin)/cfg.thin);
 end
-parameters.convergence_established=false;
+parameters.convergence=struct('status','not_checked','passed',false);
+if isfield(result,'convergence'), parameters.convergence=result.convergence; end
+m=numel(panel.tickers); nr=numel(panel.pair_i);
+expected_quantities=numel(panel.dates)*(2*m+nr)+m*(m+1)/2+m+nr;
+dsc_validate_convergence(parameters.convergence,chain_ids,chain_counts,expected_quantities);
+parameters.convergence_established=parameters.convergence.passed;
 parameters.run_dir=char(result.run_dir);
 parameters.estimation_config=struct();
 for field={'p','seed','chain_id','burnin','thin','max_iterations','prior_weeks', ...
-        'shrinkage','calibration_windows','calibration_window','ig_shape','kB'}
+        'shrinkage','calibration_windows','calibration_window','ig_shape','kB', ...
+        'num_chains','parallel_chains','convergence_mode','auto_extend','check_every', ...
+        'max_retained_draws','rhat_threshold','min_ess','max_mcse_ratio','min_diagnostic_draws'}
     if isfield(cfg,field{1})
         parameters.estimation_config.(field{1})=cfg.(field{1});
     end
@@ -145,34 +156,65 @@ function remove_temporary(path)
 if isfile(path), delete(path); end
 end
 
-function draws=collect_parameter_draws(run_dir,count,m,nr)
-files=dir(fullfile(run_dir,'posterior_chunk_*.mat'));
-if isempty(files)
-    error('dsc:ParametersDraws','No posterior chunks found in %s; cannot save parameter draws.',run_dir);
+function [draws,ids,counts,dirs,seeds]=collect_parameter_draws(result,count,panel,priors,cfg)
+dirs={result.run_dir};
+if isfield(result,'chain_dirs'), dirs=cellstr(string(result.chain_dirs)); end
+dirs=cellfun(@(p)char(java.io.File(p).getCanonicalPath()),dirs,'UniformOutput',false);
+if isempty(dirs)||numel(unique(dirs))~=numel(dirs)
+    error('dsc:ParametersIdentity','Chain directories must be nonempty and distinct.');
 end
-[~,order]=sort({files.name}); files=files(order);
-V=zeros(m,m,count); sig2h=zeros(count,m); sig2r=zeros(count,nr); offset=0;
-for k=1:numel(files)
-    loaded=load(fullfile(files(k).folder,files(k).name),'chunk');
-    if ~isfield(loaded,'chunk')||~isstruct(loaded.chunk)||~isscalar(loaded.chunk)
-        error('dsc:ParametersDraws','Invalid posterior chunk: %s',files(k).name);
+m=numel(panel.tickers); nr=numel(panel.pair_i);
+V=zeros(m,m,count); sig2h=zeros(count,m); sig2r=zeros(count,nr);
+draw_ids=zeros(count,1); iterations=zeros(count,1); offset=0;
+ids=zeros(1,numel(dirs)); counts=ids; seeds=ids; target=[];
+for c=1:numel(dirs)
+    cp_path=fullfile(dirs{c},'checkpoint.mat');
+    if ~isfile(cp_path), error('dsc:ParametersIdentity','Missing source chain checkpoint: %s.',cp_path); end
+    loaded=load(cp_path,'checkpoint'); cp=loaded.checkpoint; identity=cp.identity;
+    if ~isequal(identity.dates,panel.dates)||~isequaln(identity.returns,panel.returns)|| ...
+            ~isequal(identity.mask,logical(panel.observation_mask)&isfinite(panel.returns))|| ...
+            ~isequal(identity.tickers,panel.tickers)||~isequaln(identity.priors,priors)|| ...
+            ~strcmp(identity.source_hash,panel.source_hash)|| ...
+            ~identity.cfg.estimate_parameters||identity.cfg.burnin~=cfg.burnin||identity.cfg.thin~=cfg.thin
+        error('dsc:ParametersIdentity','Source chains must share the saved estimation sample, priors and retention settings.');
     end
-    chunk=loaded.chunk; n=numel(chunk.iterations);
-    if size(chunk.V,1)~=m||size(chunk.V,2)~=m||size(chunk.V,3)~=n|| ...
-            ~isequal(size(chunk.sig2h),[n m])||~isequal(size(chunk.sig2r),[n nr])
-        error('dsc:ParametersDraws','Posterior chunk %s has invalid parameter-draw dimensions.',files(k).name);
+    ids(c)=identity.cfg.chain_id; seeds(c)=identity.cfg.seed+ids(c)-1;
+    current=identity.cfg;
+    for field={'seed','chain_id','max_iterations','max_seconds','resume','output_root'}
+        if isfield(current,field{1}), current=rmfield(current,field{1}); end
     end
-    rows=offset+(1:n);
-    if rows(end)>count
-        error('dsc:ParametersDraws','Posterior chunks contain more parameter draws than the sampler summary.');
+    if c==1, target=current;
+    elseif ~isequaln(current,target), error('dsc:ParametersIdentity','Chains have different fixed configurations.'); end
+    files=dir(fullfile(dirs{c},'posterior_chunk_*.mat'));
+    if isempty(files), error('dsc:ParametersDraws','No posterior chunks found in %s.',dirs{c}); end
+    [~,order]=sort({files.name}); files=files(order); previous=cfg.burnin; start=offset;
+    for k=1:numel(files)
+        loaded=load(fullfile(files(k).folder,files(k).name),'chunk'); chunk=loaded.chunk;
+        n=numel(chunk.iterations); ix=chunk.iterations(:);
+        if n<1||any(~isfinite(ix))||any(ix~=floor(ix))|| ...
+                any(diff([previous;ix])~=cfg.thin)||ix(end)>cp.completed|| ...
+                ~isequal(chunk.chain_id,ids(c))||~isequal(chunk.dates,panel.dates)|| ...
+                ~isequal(chunk.tickers,panel.tickers)||~isequal(chunk.pair_i,panel.pair_i)|| ...
+                ~isequal(chunk.pair_j,panel.pair_j)
+            error('dsc:ParametersIdentity','Invalid chain identity or retained iteration sequence in %s.',files(k).name);
+        end
+        if size(chunk.V,1)~=m||size(chunk.V,2)~=m||size(chunk.V,3)~=n|| ...
+                ~isequal(size(chunk.sig2h),[n m])||~isequal(size(chunk.sig2r),[n nr])||offset+n>count
+            error('dsc:ParametersDraws','Posterior chunk %s has invalid draw dimensions/count.',files(k).name);
+        end
+        rows=offset+(1:n); V(:,:,rows)=chunk.V; sig2h(rows,:)=chunk.sig2h; sig2r(rows,:)=chunk.sig2r;
+        draw_ids(rows)=ids(c); iterations(rows)=ix; offset=offset+n; previous=ix(end);
     end
-    V(:,:,rows)=chunk.V; sig2h(rows,:)=chunk.sig2h; sig2r(rows,:)=chunk.sig2r;
-    offset=offset+n;
+    counts(c)=offset-start;
+    if counts(c)~=cp.saved, error('dsc:ParametersDraws','Chain draw count disagrees with its checkpoint.'); end
+end
+if numel(unique(ids))~=numel(ids)||numel(unique(seeds))~=numel(seeds)
+    error('dsc:ParametersIdentity','Original chain IDs and effective seeds must be distinct.');
 end
 if offset~=count
     error('dsc:ParametersDraws','Posterior chunks contain %d parameter draws, expected %d.',offset,count);
 end
-draws=struct('V',V,'sig2h',sig2h,'sig2r',sig2r);
+draws=struct('V',V,'sig2h',sig2h,'sig2r',sig2r,'chain_id',draw_ids,'iteration',iterations);
 validate_parameter_draws_local(draws,m,nr,count);
 end
 

@@ -30,7 +30,16 @@ def main():
     qa = ROOT / "research/generated/qa"
     qa.mkdir(parents=True, exist_ok=True)
     checks = {}
-    stems = ["weekly_correlation_report"] if args.report_only else ["weekly_correlation_report", "weekly_correlation_slides"]
+    publication_manifest = ROOT / "research/generated/publication_manifest.json"
+    include_paths = False
+    if publication_manifest.exists():
+        manifest = json.loads(publication_manifest.read_text())
+        include_paths = bool(manifest.get("posterior_run"))
+    stems = ["weekly_correlation_report"]
+    if include_paths:
+        stems.append("weekly_correlation_paths")
+    if not args.report_only:
+        stems.append("weekly_correlation_slides")
     for stem in stems:
         pdf = output / (stem + ".pdf")
         info = subprocess.check_output([tool("pdfinfo"), str(pdf)], text=True)
@@ -40,13 +49,20 @@ def main():
             raise AssertionError(f"Unresolved reference in {pdf.name}")
         if "slides" in stem and not 12 <= count <= 15:
             raise AssertionError(f"Expected 12--15 slides, got {count}")
-        if "report" in stem and "All 91 pairwise correlation paths" not in content:
-            raise AssertionError("Missing complete pair appendix")
-        publication_manifest = ROOT / "research/generated/publication_manifest.json"
-        if "report" in stem and publication_manifest.exists():
-            manifest = json.loads(publication_manifest.read_text())
-            if manifest.get("posterior_run") and "All 91 Bayesian correlation paths" not in content:
-                raise AssertionError("Missing Bayesian correlation-path appendix from the selected sampler run")
+        if stem == "weekly_correlation_report":
+            forbidden = ["Appendix", "Selected Bayesian correlation paths",
+                         "Selected smoothed conditional innovation-correlation paths",
+                         "All 91 pairwise correlation paths", "Complete stationarity diagnostics",
+                         "Empirical-Bayes prior calibration"]
+            present = [phrase for phrase in forbidden if phrase in content]
+            if present:
+                raise AssertionError(f"Unexpected appendix or sample-path content in report: {present}")
+        if stem == "weekly_correlation_paths":
+            forbidden = ["All Bayesian correlation paths", "Conditional on posterior-mean",
+                         "Bands exclude parameter uncertainty", "Convergence not established"]
+            present = [phrase for phrase in forbidden if phrase in content]
+            if present:
+                raise AssertionError(f"Unexpected provenance header text in companion figures: {present}")
         log = (output / (stem + ".log")).read_text(errors="replace")
         issues = [line for line in log.splitlines() if re.search(r"Overfull \\[hv]box|undefined|Citation .* undefined", line)]
         if issues:
@@ -56,11 +72,10 @@ def main():
             page_dir = qa / stem
             page_dir.mkdir(exist_ok=True)
             # These are this checker's reproducible QA images, not source artifacts.
-            # Remove only surplus pages/contact sheets from an older PDF build.
+            # Clear prior render pages so reduced page counts cannot leave stale
+            # zero-padded or non-padded images in the QA inventory.
             for stale in page_dir.glob("page-*.png"):
-                match = re.fullmatch(r"page-(\d+)\.png", stale.name)
-                if match and int(match.group(1)) > count:
-                    stale.unlink()
+                stale.unlink()
             for stale in qa.glob(stem + "_contact_*.png"):
                 if re.fullmatch(re.escape(stem) + r"_contact_\d+\.png", stale.name):
                     stale.unlink()

@@ -9,6 +9,16 @@ cfg.freq = 'weekly';
 cfg.p = 0;
 cfg.seed = 20260911;
 cfg.chain_id = 1;
+cfg.num_chains = 1;
+cfg.parallel_chains = false; % true requires Parallel Computing Toolbox.
+cfg.convergence_mode = 'report'; % 'off' or 'report'.
+cfg.auto_extend = false;
+cfg.check_every = 250; % Retained draws per chain between diagnostic checks.
+cfg.max_retained_draws = 2000; % Per-chain cap when auto_extend=true.
+cfg.min_diagnostic_draws = 100;
+cfg.rhat_threshold = 1.01;
+cfg.min_ess = 400;
+cfg.max_mcse_ratio = 0.05;
 cfg.prior_weeks = 104; % Initial-prior weeks reserved and excluded from the likelihood.
 cfg.shrinkage = 0.05;
 cfg.calibration_windows = [52 104 156];
@@ -27,5 +37,5 @@ cfg.parameter_dir = ''; % Empty resolves to output_root/parameters.
 cfg.parameter_file = ''; % Empty loads the latest timestamped parameter file.
 cfg.parameter_smoothing = 'mean'; % 'mean' uses posterior means; 'draws' propagates saved parameter draws.
 cfg.correlation_backend = 'auto'; % Use the validated MEX kernel if built; otherwise MATLAB.
-cfg.correlation_threads = 4; % Independent date blocks; no parallel chains in the pilot.
+cfg.correlation_threads = 4; % Per chain: account for num_chains when running in parallel.
 end

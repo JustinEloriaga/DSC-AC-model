@@ -3,6 +3,10 @@ function result = dsc_run_inference(panel,priors,cfg,run_dir,inference)
 % With an earlier cutoff, estimation and full-history conditional smoothing
 % are separate stages. Each has the configured draw target and time budget.
 estimation_result=[];
+convergence_mode='report';
+if isfield(cfg,'convergence_mode'), convergence_mode=cfg.convergence_mode; end
+cfg.convergence_mode=validatestring(convergence_mode,{'off','report'});
+convergence_mode=cfg.convergence_mode;
 modeled=inference.smoothing_panel;
 parameter_smoothing=validatestring(inference.parameter_smoothing,{'draws','mean'});
 if inference.estimate_parameters
@@ -17,13 +21,13 @@ if inference.estimate_parameters
     estimation_cfg=cfg; estimation_cfg.estimate_parameters=true;
     fprintf('Estimating parameters through %s (%d weekly returns).\n', ...
         inference.estimation_end,numel(training.dates));
-    estimation_result=dsc_sample(training,priors,estimation_cfg,estimation_dir);
+    estimation_result=dsc_run_chains(training,priors,estimation_cfg,estimation_dir);
     require_retained(estimation_result);
     requested=floor((cfg.max_iterations-cfg.burnin)/cfg.thin);
-    if estimation_result.saved_draws<requested
+    if any(estimation_result.saved_draws_per_chain<requested)
         warning('dsc:IncompleteParameterEstimation', ...
-            'Parameter estimation retained %d of %d requested draws. Saving the partial estimate with its actual count.', ...
-            estimation_result.saved_draws,requested);
+            'Parameter estimation retained fewer than %d requested draws in at least one chain (%d total). Saving the actual counts.', ...
+            requested,estimation_result.saved_draws);
     end
     parameter_path=dsc_save_parameters(estimation_result,training,priors, ...
         estimation_cfg,inference.parameter_dir,inference.calibration_panel);
@@ -33,6 +37,9 @@ if inference.estimate_parameters
     end
 else
     parameters=inference.parameters;
+    if isfield(parameters,'convergence')
+        fprintf('Saved estimation convergence: %s.\n',parameters.convergence.status);
+    end
     needs_conditional_smoothing=true; % Run conditional smoothing even with no new dates.
 end
 if needs_conditional_smoothing
@@ -51,7 +58,7 @@ if needs_conditional_smoothing
     smoothing_priors.source_hash=panel.source_hash;
     fprintf('Smoothing states through %s with fixed parameters estimated at %s.\n', ...
         char(string(modeled.dates(end),'yyyy-MM-dd')),parameters.estimated_at);
-    result=dsc_sample(modeled,smoothing_priors,smoothing_cfg,run_dir);
+    result=dsc_run_chains(modeled,smoothing_priors,smoothing_cfg,run_dir);
     require_retained(result);
 end
 metadata=struct('estimate_parameters_requested',inference.estimate_parameters, ...
@@ -71,6 +78,10 @@ metadata=struct('estimate_parameters_requested',inference.estimate_parameters, .
     'fixed_parameter_summary',parameter_summary_text(parameter_smoothing), ...
     'state_scope','B, h and r jointly smoothed from smoothing_start through smoothing_end; calibration weeks excluded; historical modeled states may revise.', ...
     'parameter_uncertainty_in_bands',strcmp(result.inference_mode,'parameter_estimation')||strcmp(parameter_smoothing,'draws'));
+metadata.estimation_convergence=parameters.convergence;
+metadata.state_convergence=result.convergence;
+metadata.num_chains=numel(result.chain_dirs);
+metadata.retained_draws_per_chain=result.saved_draws_per_chain;
 if ~isempty(estimation_result)
     metadata.parameter_estimation_status=estimation_result.status;
 elseif isfield(parameters,'estimation_status')
@@ -94,6 +105,7 @@ manifest_path=fullfile(run_dir,'run_manifest.json');
 if isfile(manifest_path), manifest=jsondecode(fileread(manifest_path));
 else, manifest=struct('source_hash',panel.source_hash); end
 manifest.inference=metadata;
+manifest.convergence_established=result.convergence_established;
 write_json(manifest_path,manifest);
 temporary=[tempname(run_dir),'.mat'];
 save(temporary,'result','-v7.3');
