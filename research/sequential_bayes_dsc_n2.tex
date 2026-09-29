@@ -1,0 +1,443 @@
+\documentclass[10pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage[colorlinks=true,urlcolor=teal,linkcolor=teal]{hyperref}
+
+\geometry{left=20mm,right=20mm,top=22mm,bottom=21mm,headheight=14pt}
+\definecolor{teal}{HTML}{147D83}
+\definecolor{ink}{HTML}{20363D}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small DSC-AC / Priors and laws of motion}
+\fancyhead[R]{\small Two series, four dates}
+\fancyfoot[L]{\scriptsize Fixed symbolic hyperparameters}
+\fancyfoot[R]{\small\thepage}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\setlength{\emergencystretch}{2em}
+
+\newcommand{\N}{\mathcal N}
+\newcommand{\IG}{\operatorname{IG}}
+\newcommand{\IW}{\operatorname{IW}}
+\newcommand{\Cov}{\operatorname{Cov}}
+\newcommand{\tr}{\operatorname{tr}}
+\newcommand{\diag}{\operatorname{diag}}
+
+\hypersetup{
+  pdftitle={DSC-AC Model: Priors and Laws of Motion},
+  pdfsubject={Priors for V, B1, qh, h1, qr, r1, and degrees of freedom}
+}
+
+\begin{document}
+
+{\color{ink}\LARGE\bfseries Priors and laws of motion for the two-series DSC model\par}
+\vspace{2pt}
+{\color{teal}\large One retained section: $V$, $B_1$, $q_h$, $h_1$, $q_r$, and $r_1$}
+
+For $n=2$ observed series and dates $t=1,2,3,4$, this section records the complete
+prior hierarchy and the state-transition laws. All calibrated values are kept abstract.
+The subscripts on the hyperparameters identify which prior they belong to.
+
+\section*{Priors and laws of motion}
+
+Let
+\[
+\resizebox{\textwidth}{!}{$\displaystyle
+\eta=\bigl(
+\underbrace{\Psi,\nu_V}_{V\sim \IW_2(\Psi,\nu_V)},
+\underbrace{m_B,C_B}_{B_1\sim \N_2(m_B,C_B)},
+\underbrace{a_h,b_h}_{q_{hj}\sim \IG(a_h,b_h)},
+\underbrace{\mu_{h1},\mu_{h2},c_h}_{h_{1j}\mid q_{hj}\sim \N(\mu_{hj},(c_h+1)q_{hj})},
+\underbrace{a_r,b_r}_{q_r\sim \IG(a_r,b_r)},
+\underbrace{\mu_r,c_r}_{r_1\mid q_r\sim \N(\mu_r,(c_r+1)q_r)}
+\bigr).
+$}
+\]
+where $C_B\succ0$, $\Psi\succ0$, $\nu_V>1$, $a_h,a_r,b_h,b_r>0$, and
+$c_h,c_r>0$. In the specification with one common IG shape,
+\[
+  a_h=a_r=a.
+\]
+We condition on $\eta$ throughout.
+
+\subsection*{Mean states and their innovation covariance}
+
+\begin{align*}
+V &\sim \IW_2(\Psi,\nu_V),
+& B_1 &\sim \N_2(m_B,C_B),\\
+B_t\mid B_{t-1},V &\sim \N_2(B_{t-1},V),
+&& t=2,3,4.
+\end{align*}
+
+
+\subsection*{Volatility states and their innovation variances}
+
+For $j=1,2$,
+\begin{align*}
+q_{hj} &\sim \IG(a_h,b_h),
+& h_{1j}\mid q_{hj} &\sim \N\!\left(\mu_{hj},(c_h+1)q_{hj}\right),\\
+h_{tj}\mid h_{t-1,j},q_{hj}
+  &\sim \N(h_{t-1,j},q_{hj}),
+&& t=2,3,4.
+\end{align*}
+
+\subsection*{Correlation-coordinate state and its innovation variance}
+
+\begin{align*}
+q_r &\sim \IG(a_r,b_r),
+& r_1\mid q_r &\sim \N\!\left(\mu_r,(c_r+1)q_r\right),\\
+r_t\mid r_{t-1},q_r
+  &\sim \N(r_{t-1},q_r),
+&& t=2,3,4.
+\end{align*}
+
+\section*{Posterior after observing only $y_1,y_2$}
+
+Let
+\[
+  y_t\mid B_t,h_t,r_t\sim \N_2\!\left(B_t,\Sigma(h_t,r_t)\right),
+  \qquad t=1,2,
+\]
+where $h_t=(h_{t1},h_{t2})'$ and $r_t$ determines the $2\times2$ correlation.
+After observing $y_1,y_2$, the exact posterior kernel is
+\begin{align*}
+&p(B_{1:2},h_{1:2},r_{1:2},V,q_{h1},q_{h2},q_r\mid y_{1:2})\\
+&\quad\propto
+\prod_{t=1}^2\N_2\!\left(y_t;B_t,\Sigma(h_t,r_t)\right)
+\N_2(B_1;m_B,C_B)\N_2(B_2;B_1,V)\IW_2(V;\Psi,\nu_V)\\
+&\qquad{}\times
+\prod_{j=1}^2
+\IG(q_{hj};a_h,b_h)
+\N\!\left(h_{1j};\mu_{hj},(c_h+1)q_{hj}\right)
+\N(h_{2j};h_{1j},q_{hj})\\
+&\qquad{}\times
+\IG(q_r;a_r,b_r)
+\N\!\left(r_1;\mu_r,(c_r+1)q_r\right)
+\N(r_2;r_1,q_r).
+\end{align*}
+
+Conditional on the mean states, the covariance posterior is conjugate:
+\[
+  V\mid B_{1:2},y_{1:2}
+  \sim \IW_2\!\left(\Psi+(B_2-B_1)(B_2-B_1)',\,\nu_V+1\right).
+\]
+Conditional on the volatility path, the innovation-variance posteriors are
+\[
+q_{hj}\mid h_{1:2,j},y_{1:2}
+\sim
+\IG\!\left(a_h+1,\,
+b_h+\frac12\left[
+\frac{(h_{1j}-\mu_{hj})^2}{c_h+1}
++(h_{2j}-h_{1j})^2
+\right]\right),
+\qquad j=1,2,
+\]
+and, conditional on the correlation path,
+\[
+q_r\mid r_{1:2},y_{1:2}
+\sim
+\IG\!\left(a_r+1,\,
+b_r+\frac12\left[
+\frac{(r_1-\mu_r)^2}{c_r+1}
++(r_2-r_1)^2
+\right]\right).
+\]
+
+To use this posterior as the prior before observing $y_3$, propagate one step:
+\begin{align*}
+B_3\mid B_2,V,y_{1:2} &\sim \N_2(B_2,V),\\
+h_{3j}\mid h_{2j},q_{hj},y_{1:2} &\sim \N(h_{2j},q_{hj}),
+&& j=1,2,\\
+r_3\mid r_2,q_r,y_{1:2} &\sim \N(r_2,q_r).
+\end{align*}
+This is the direct analogue of the original prior for
+$(B_1,h_1,r_1)$ before any data are observed. Equivalently,
+\[
+p(B_3,h_3,r_3,V,q_h,q_r\mid y_{1:2})
+=\int p(B_3\mid B_2,V)
+\prod_{j=1}^2p(h_{3j}\mid h_{2j},q_{hj})
+p(r_3\mid r_2,q_r)
+\]
+\[
+\hspace{19mm}\times
+p(B_{1:2},h_{1:2},r_{1:2},V,q_h,q_r\mid y_{1:2})\,
+dB_{1:2}\,dh_{1:2}\,dr_{1:2}.
+\]
+Then the next update multiplies this predictive prior by
+\[
+  p(y_3\mid B_3,h_3,r_3)
+  =\N_2\!\left(y_3;B_3,\Sigma(h_3,r_3)\right).
+\]
+
+\section*{Algorithm A: sampling given $y_1,y_2$}
+
+To draw from
+$p(B_{1:2},h_{1:2},r_{1:2},V,q_{h1},q_{h2},q_r\mid y_{1:2})$,
+iterate the following Gibbs sampler with elliptical slice sampling (ESS) for the nonlinear
+volatility and correlation states. Given current $h_{1:2}$ and $r_{1:2}$, define
+$\Sigma_t=\Sigma(h_t,r_t)$ for $t=1,2$.
+
+\textbf{1. Draw the mean-state path $B_{1:2}$.}
+Let $B=(B_1',B_2')'$ and draw
+\[
+  B\mid V,h_{1:2},r_{1:2},y_{1:2}\sim \N_4(M_B,\Omega_B),
+\]
+where $\Omega_B=\Lambda_B^{-1}$,
+\[
+\Lambda_B=
+\begin{pmatrix}
+C_B^{-1}+V^{-1}+\Sigma_1^{-1} & -V^{-1}\\
+-V^{-1} & V^{-1}+\Sigma_2^{-1}
+\end{pmatrix},
+\]
+and
+\[
+M_B=\Omega_B
+\begin{pmatrix}
+C_B^{-1}m_B+\Sigma_1^{-1}y_1\\
+\Sigma_2^{-1}y_2
+\end{pmatrix}.
+\]
+
+\textbf{2. Draw the mean innovation covariance.}
+\[
+V\mid B_{1:2},y_{1:2}
+\sim
+\IW_2\!\left(\Psi+(B_2-B_1)(B_2-B_1)',\,\nu_V+1\right).
+\]
+
+\textbf{3. Draw the volatility innovation variances.} For $j=1,2$,
+\[
+q_{hj}\mid h_{1:2,j},y_{1:2}
+\sim
+\IG\!\left(a_h+1,\,
+b_h+\frac12\left[
+\frac{(h_{1j}-\mu_{hj})^2}{c_h+1}
++(h_{2j}-h_{1j})^2
+\right]\right).
+\]
+
+\textbf{4. Draw the correlation innovation variance.}
+\[
+q_r\mid r_{1:2},y_{1:2}
+\sim
+\IG\!\left(a_r+1,\,
+b_r+\frac12\left[
+\frac{(r_1-\mu_r)^2}{c_r+1}
++(r_2-r_1)^2
+\right]\right).
+\]
+
+\textbf{5. Update the volatility paths.}
+For each $j=1,2$, update $h_{1:2,j}=(h_{1j},h_{2j})'$ with ESS. Use the Gaussian
+prior
+\[
+h_{1:2,j}\mid q_{hj}\sim
+\N_2\!\left(\mu_{hj}\mathbf 1_2,\,
+q_{hj}\begin{pmatrix}c_h+1&c_h+1\\ c_h+1&c_h+2\end{pmatrix}\right),
+\]
+and the ESS likelihood factor
+\[
+L_h(h_{1:2,j})=
+\prod_{t=1}^2
+\N_2\!\left(y_t;B_t,\Sigma(h_t,r_t)\right),
+\]
+holding the other volatility coordinate and $r_{1:2}$ fixed.
+
+\textbf{6. Update the correlation path.}
+Update $r_{1:2}=(r_1,r_2)'$ with ESS. Use the Gaussian prior
+\[
+r_{1:2}\mid q_r\sim
+\N_2\!\left(\mu_r\mathbf 1_2,\,
+q_r\begin{pmatrix}c_r+1&c_r+1\\ c_r+1&c_r+2\end{pmatrix}\right),
+\]
+and the ESS likelihood factor
+\[
+L_r(r_{1:2})=
+\prod_{t=1}^2
+\N_2\!\left(y_t;B_t,\Sigma(h_t,r_t)\right),
+\]
+holding $h_{1:2}$ fixed.
+
+After convergence, retain the joint draws of
+$(V,q_h,q_r,B_{1:2},h_{1:2},r_{1:2})$ as a Monte Carlo approximation to the
+posterior. Keep all components of each draw together for the following update.
+
+\clearpage
+\section*{Algorithm B: updating with $y_3$}
+
+Algorithm A supplies the saved draws conditional on $y_{1:2}$. Algorithm B has four steps: extend, weight, resample, and update the parameters and full paths using Gibbs and ESS.
+
+Write $\theta=(V,q_{h1},q_{h2},q_r)$, $x_t=(B_t,h_t,r_t)$, and
+$\pi_t(\theta,x_{1:t})=p(\theta,x_{1:t}\mid y_{1:t})$.
+Suppose we have retained $M$ equally weighted joint draws
+\[
+  (\theta^{(m)},x_{1:2}^{(m)}),\qquad m=1,\ldots,M,
+  \qquad\text{from }\pi_2.
+\]
+For this two-series model, the observation covariance is
+\[
+\Sigma(h_t,r_t)=D_t
+\begin{pmatrix}1&\tanh r_t\\ \tanh r_t&1\end{pmatrix}D_t,
+\qquad D_t=\diag(e^{h_{t1}/2},e^{h_{t2}/2}).
+\]
+The exact Bayesian update is
+\[
+\boxed{
+\pi_3(\theta,x_{1:3})=
+\frac{\N_2(y_3;B_3,\Sigma(h_3,r_3))\,
+      p(x_3\mid x_2,\theta)\,\pi_2(\theta,x_{1:2})}
+     {p(y_3\mid y_{1:2})}.}
+\]
+Substituting $\pi_2\propto p(\theta,x_{1:2})\prod_{t=1}^2p(y_t\mid x_t)$
+gives $\pi_3\propto p(\theta,x_{1:3})\prod_{t=1}^3p(y_t\mid x_t)$,
+the same posterior obtained by using the original priors and all three observations.
+
+\textbf{1. Extend each saved draw to date 3.}
+For $m=1,\ldots,M$, keep $\theta^{(m)}$ and $x_{1:2}^{(m)}$ together and draw
+independently conditional on that saved draw:
+\begin{align*}
+B_3^{(m)}&\sim\N_2(B_2^{(m)},V^{(m)}),\\
+h_{3j}^{(m)}&\sim\N(h_{2j}^{(m)},q_{hj}^{(m)}),\qquad j=1,2,\\
+r_3^{(m)}&\sim\N(r_2^{(m)},q_r^{(m)}).
+\end{align*}
+The resulting complete draw is
+\[
+\bigl(V^{(m)},q_{h1}^{(m)},q_{h2}^{(m)},q_r^{(m)},
+B_{1:3}^{(m)},h_{1:3}^{(m)},r_{1:3}^{(m)}\bigr),
+\]
+where $m$ labels the complete draw, including all parameters and paths.
+Superscripts label Monte Carlo draws, while subscripts $1:3$ label time.
+
+\textbf{2. Weight using only the new observation.}
+Compute
+\[
+\ell_m=\log\N_2\!\left(y_3;B_3^{(m)},
+                    \Sigma(h_3^{(m)},r_3^{(m)})\right),
+\qquad
+w_m=\frac{\exp(\ell_m-\ell_{\max})}
+           {\sum_{k=1}^M\exp(\ell_k-\ell_{\max})},
+\]
+where $\ell_{\max}=\max_k\ell_k$. The proposal in step 1 is
+$\pi_2(\theta,x_{1:2})p(x_3\mid x_2,\theta)$. The target-to-proposal ratio
+leaves precisely the likelihood of $y_3$ as the unnormalized importance weight.
+Each complete draw has weight $w_m$, and together the weighted complete draws
+approximate the updated posterior.
+
+\textbf{3. Resample complete draws.}
+For each new draw $i=1,\ldots,M$, choose an index $A_i\in\{1,\ldots,M\}$
+with $\Pr(A_i=m)=w_m$. Copy into new draw $i$ the complete tuple
+\[
+\bigl(V^{(A_i)},q_{h1}^{(A_i)},q_{h2}^{(A_i)},q_r^{(A_i)},
+B_{1:3}^{(A_i)},h_{1:3}^{(A_i)},r_{1:3}^{(A_i)}\bigr).
+\]
+For example, $A_i=7$ means copy all parameters and paths from draw 7
+together. Selection is with replacement, so duplicate new draws are allowed.
+The observation $y_3$ therefore changes the distribution of the old states and
+parameters through their weights.
+
+\textbf{Continue to Step 4 on page \pageref{alg-b-step4}.}
+
+\textbf{Monte Carlo accuracy.}
+The boxed identity is exact. A finite saved sample, weighted or resampled,
+is an approximation to it. Step 4 moves the parameters and all three dates
+continuously, with $\pi_3$ as the invariant distribution. A finite number of
+moves does not guarantee exact independent posterior draws; convergence and
+mixing still need to be checked.
+
+\clearpage
+\subsection*{Algorithm B (continued): Step 4}
+\label{alg-b-step4}
+
+\textbf{Update the parameters and full paths using Gibbs and ESS.}
+
+Use each resampled complete draw as starting values, perform the following
+full Gibbs/ESS sweep $R$ times, and retain its final parameters and paths.
+In every block, use the most recently updated values of the other variables.
+The original hyperparameters $\eta$ remain fixed.
+
+\textbf{(a) Draw $B_{1:3}$ jointly.}
+Set $\Sigma_t=\Sigma(h_t,r_t)$, $B=(B_1',B_2',B_3')'$, and draw
+\[
+B\mid V,h_{1:3},r_{1:3},y_{1:3}\sim\N_6(M_{B,3},\Omega_{B,3}),
+\qquad\Omega_{B,3}=\Lambda_{B,3}^{-1},
+\]
+\[
+\Lambda_{B,3}=\begin{pmatrix}
+C_B^{-1}+V^{-1}+\Sigma_1^{-1}&-V^{-1}&0\\
+-V^{-1}&2V^{-1}+\Sigma_2^{-1}&-V^{-1}\\
+0&-V^{-1}&V^{-1}+\Sigma_3^{-1}
+\end{pmatrix},
+\qquad
+M_{B,3}=\Omega_{B,3}\begin{pmatrix}
+C_B^{-1}m_B+\Sigma_1^{-1}y_1\\
+\Sigma_2^{-1}y_2\\
+\Sigma_3^{-1}y_3
+\end{pmatrix}.
+\]
+
+\textbf{(b) Draw $V$.}
+With $\Delta B_t=B_t-B_{t-1}$,
+\[
+V\mid B_{1:3},y_{1:3}\sim
+\IW_2\!\left(\Psi+\sum_{t=2}^3\Delta B_t\Delta B_t',\,\nu_V+2\right).
+\]
+
+\textbf{(c) Draw $q_{h1},q_{h2},q_r$.}
+For $j=1,2$,
+\[
+q_{hj}\mid h_{1:3,j},y_{1:3}\sim
+\IG\!\left(a_h+\frac32,\,
+b_h+\frac12\left[
+\frac{(h_{1j}-\mu_{hj})^2}{c_h+1}
++\sum_{t=2}^3(h_{tj}-h_{t-1,j})^2\right]\right),
+\]
+\[
+q_r\mid r_{1:3},y_{1:3}\sim
+\IG\!\left(a_r+\frac32,\,
+b_r+\frac12\left[
+\frac{(r_1-\mu_r)^2}{c_r+1}
++\sum_{t=2}^3(r_t-r_{t-1})^2\right]\right).
+\]
+
+\textbf{(d) Update the full volatility and correlation paths using ESS.}
+Define
+\[
+K_3(c)=\begin{pmatrix}
+c+1&c+1&c+1\\
+c+1&c+2&c+2\\
+c+1&c+2&c+3
+\end{pmatrix}.
+\]
+For each $j=1,2$, perform an ESS update of $h_{1:3,j}$ with Gaussian prior
+$\N_3(\mu_{hj}\mathbf1_3,q_{hj}K_3(c_h))$, holding the other volatility
+coordinate and $r_{1:3}$ fixed. Then perform an ESS update of $r_{1:3}$ with
+Gaussian prior $\N_3(\mu_r\mathbf1_3,q_rK_3(c_r))$, holding $h_{1:3}$ fixed.
+For each update, the likelihood factor is
+\[
+L_{1:3}(B,h,r)=\prod_{t=1}^3\N_2(y_t;B_t,\Sigma(h_t,r_t)).
+\]
+These updates change the states at dates 1 and 2 as well as date 3, and therefore
+smooth the whole path conditional on $y_{1:3}$.
+
+\textbf{Which data are needed?}
+Steps 1--3 need only the saved joint draws and $y_3$.
+Step 4 also needs $y_1,y_2$ to evaluate the posterior at new paths.
+This does not count the old data twice: each Gibbs or ESS move targets
+$p(\theta,x_{1:3})L_{1:3}$, in which each observation appears once.
+
+{\small This is a resample--move update
+(\href{https://doi.org/10.1111/1467-9868.00280}{Gilks and Berzuini, 2001}),
+using \href{https://proceedings.mlr.press/v9/murray10a.html}{elliptical slice sampling}
+for the Gaussian-prior path blocks (Murray, Adams and MacKay, 2010).}
+
+\end{document}
