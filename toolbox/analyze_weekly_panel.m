@@ -1,10 +1,8 @@
 function summary = analyze_weekly_panel(panel,cfg)
-%ANALYZE_WEEKLY_PANEL Export reproducible descriptive and stationarity results.
+%ANALYZE_WEEKLY_PANEL Export reproducible descriptive results.
 %   Outputs are written beneath cfg.output_root/data. Raw input files are
 %   never edited. Rolling estimates use trailing 52/104-week windows only;
 %   an incomplete pair-window is explicitly NaN, never silently shortened.
-%   Stationarity tests concern the mean/unit-root specification. They do not
-%   establish constant variance or constancy of the TVP model's parameters.
 
 arguments
     panel (1,1) struct
@@ -139,15 +137,6 @@ changes=cell2table(changeRows,'VariableNames',{'Window','PairIndex','TickerI', .
     'LargestStepDate','CrossesZero'});
 writetable(changes,fullfile(outdir,'correlation_changes.csv'));
 
-% Diagnostics use complete, regular marked-return data. Masks are reported,
-% not removed: deleting missing observations would compress the time axis.
-% These descriptive tests therefore refer to the as-of panel even when the
-% optional model observation mask is active.
-[stationarity,diagnostics,adfCandidates]=stationarityTables(panel);
-writetable(stationarity,fullfile(outdir,'stationarity.csv'));
-writetable(diagnostics,fullfile(outdir,'diagnostics.csv'));
-writetable(adfCandidates,fullfile(outdir,'adf_candidates.csv'));
-
 summary=struct();
 summary.schema_version=1;
 summary.n_returns=T; summary.n_levels=T+1; summary.n_series=m; summary.n_pairs=q;
@@ -169,24 +158,9 @@ summary.model_masked_return_cells=sum(~panel.observation_mask(:));
 summary.closure_policy=panel.closure_policy;
 summary.closure_reference=panel.closure_reference;
 summary.excluded_final_raw_rows=panel.excluded_final_rows;
-summary.stationarity_data='complete as-of marks, including flagged closure';
-summary.adf_note='BIC lags 0:13 on common dependent sample; MATLAB p-values bounded [0.001,0.999]';
-summary.kpss_note='Newey-West bandwidths 4,13,26; MATLAB p-values bounded [0.01,0.10]';
-summary.mean_stationarity_note='Mean/unit-root diagnostics do not establish constant variance or invariant dynamic coefficients.';
 summary.rolling_note='Trailing complete pair-windows only; no centered windows or future observations.';
 summary.ages=struct('days',unique(panel.age_days(:))', ...
     'counts',arrayfun(@(a)sum(panel.age_days(:)==a),unique(panel.age_days(:))'));
-ir=stationarity.Transform=="weekly_log_return_pct";
-summary.adf_return_rejections=sum(stationarity.Reject5pct(ir & stationarity.Test=="ADF"));
-summary.adf_invalid_selected_candidates=sum(adfCandidates.Selected & ~adfCandidates.ValidStatistic);
-summary.kpss_return_rejections=struct();
-for lag=[4,13,26]
-    summary.kpss_return_rejections.(sprintf('lags%d',lag))= ...
-        sum(stationarity.Reject5pct(ir & stationarity.Test=="KPSS" & stationarity.Lags==lag));
-end
-summary.ljung_box_return_rejections=sum(diagnostics.Reject5pct(diagnostics.Test=="LjungBoxReturns"));
-summary.ljung_box_squared_return_rejections=sum(diagnostics.Reject5pct(diagnostics.Test=="LjungBoxSquaredReturns"));
-summary.arch_rejections=sum(diagnostics.Reject5pct(diagnostics.Test=="ARCH"));
 [~,order]=sort(fullCorr,'descend');
 summary.top_positive_pairs=table2struct(correlations(order(1:min(5,q)),:));
 [~,order]=sort(fullCorr,'ascend');
@@ -201,93 +175,5 @@ cleanup=onCleanup(@()fclose(fid));
 fprintf(fid,'%s\n',jsonencode(summary,'PrettyPrint',true));
 clear cleanup
 save(fullfile(outdir,'panel_analysis.mat'),'summary','series','correlations', ...
-    'changes','stationarity','diagnostics','adfCandidates','-v7.3');
-end
-
-function [stationarity,diagnostics,adfCandidates]=stationarityTables(panel)
-m=numel(panel.tickers);
-rows=cell(15*m,11); row=0;
-diagnosticRows=cell(3*m,8); drow=0;
-candidateRows=cell(3*m*14,12); crow=0;
-for j=1:m
-    % Both plausible deterministic specifications are exposed for levels.
-    ys={log(panel.levels(:,j)),log(panel.levels(:,j)),panel.returns(:,j)};
-    transforms=["log_level","log_level","weekly_log_return_pct"];
-    models=["ARD","TS","ARD"];
-    for v=1:3
-        y=ys{v}; maxLag=13;
-        if numel(y)<=2*maxLag+5
-            error('weekly:DiagnosticSample','Diagnostics require more than %d observations.',2*maxLag+5);
-        end
-        bic=nan(maxLag+1,1); hh=false(maxLag+1,1);
-        pp=nan(maxLag+1,1); ss=nan(maxLag+1,1); nn=zeros(maxLag+1,1);
-        valid=true(maxLag+1,1); warningId=strings(maxLag+1,1);
-        for lag=0:maxLag
-            common=y(maxLag-lag+1:end);
-            lastwarn('');
-            [hh(lag+1),pp(lag+1),ss(lag+1),~,reg]= ...
-                adftest(common,'Model',models(v),'Lags',lag,'Alpha',0.05);
-            [~,warningId(lag+1)]=lastwarn;
-            valid(lag+1)=warningId(lag+1)~="econ:adftest:InvalidStatistic";
-            bic(lag+1)=reg.BIC; nn(lag+1)=reg.size;
-        end
-        assert(all(nn==nn(1)),'weekly:ADFCommonSample','ADF lag samples differ.');
-        [bestBIC,chosen]=min(bic); lag=chosen-1;
-        if v<=2, testDates=panel.level_dates; else, testDates=panel.dates; end
-        for candidate=0:maxLag
-            crow=crow+1; k=candidate+1;
-            candidateRows(crow,:)={panel.tickers(j),transforms(v),models(v),candidate, ...
-                bic(k),nn(k),k==chosen,valid(k),warningId(k),ss(k), ...
-                string(testDates(maxLag+2),'yyyy-MM-dd'),string(testDates(end),'yyyy-MM-dd')};
-        end
-        if ~valid(chosen)
-            error('weekly:InvalidADF','BIC-selected ADF statistic is invalid for %s/%s/%s.', ...
-                panel.tickers(j),transforms(v),models(v));
-        end
-        row=row+1;
-        rows(row,:)={panel.tickers(j),transforms(v),"ADF",models(v),lag,ss(chosen), ...
-            pp(chosen),boundLabel(pp(chosen),0.001,0.999),hh(chosen),nn(chosen),bestBIC};
-        trend=models(v)=="TS";
-        for bandwidth=[4,13,26]
-            [h,p,stat]=kpsstest(y,'Trend',trend,'Lags',bandwidth,'Alpha',0.05);
-            if trend, name="trend"; else, name="level"; end
-            row=row+1;
-            rows(row,:)={panel.tickers(j),transforms(v),"KPSS",name,bandwidth, ...
-                stat,p,boundLabel(p,0.01,0.10),h,numel(y),NaN};
-        end
-    end
-    y=panel.returns(:,j); residual=y-mean(y);
-    [h1,p1,s1]=lbqtest(y,'Lags',13,'Alpha',0.05);
-    [h2,p2,s2]=lbqtest(residual.^2,'Lags',13,'Alpha',0.05);
-    [h3,p3,s3]=archtest(residual,'Lags',13,'Alpha',0.05);
-    names=["LjungBoxReturns","LjungBoxSquaredReturns","ARCH"];
-    hs=[h1,h2,h3]; stats=[s1,s2,s3];
-    % Evaluate the chi-square survival function directly: 1-CDF loses tiny
-    % positive probabilities to cancellation in MATLAB's test wrappers.
-    ps=chi2cdf(stats,13,'upper');
-    for k=1:3
-        drow=drow+1;
-        % Numeric zero is explicitly labeled as numerical underflow, never an
-        % exact probability of zero. Publication should print '< 1e-12'.
-        if ps(k)<1e-12, label="<1e-12"; else, label="numeric"; end
-        diagnosticRows(drow,:)={panel.tickers(j),names(k),13,stats(k),ps(k),label,hs(k),numel(y)};
-    end
-end
-stationarity=cell2table(rows(1:row,:),'VariableNames',{'Ticker','Transform','Test', ...
-    'Model','Lags','Statistic','PValue','PValueBound','Reject5pct','N','BIC'});
-diagnostics=cell2table(diagnosticRows,'VariableNames',{'Ticker','Test','Lags', ...
-    'Statistic','PValue','PValueBound','Reject5pct','N'});
-adfCandidates=cell2table(candidateRows,'VariableNames',{'Ticker','Transform','Model', ...
-    'Lags','BIC','N','Selected','ValidStatistic','WarningID','Statistic', ...
-    'FirstDependentDate','LastDependentDate'});
-end
-
-function label=boundLabel(p,lower,upper)
-if p<=lower
-    label="<="+string(lower);
-elseif p>=upper
-    label=">="+string(upper);
-else
-    label="interpolated";
-end
+    'changes','-v7.3');
 end
