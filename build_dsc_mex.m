@@ -1,5 +1,5 @@
 function build_info = build_dsc_mex()
-%BUILD_DSC_MEX Build the optional batched correlation kernel locally.
+%BUILD_DSC_MEX Build the optional correlation and mean-smoothing kernels.
 % Uses the configured C++ compiler and MATLAB's bundled LAPACK/BLAS.
 % On macOS, installed Apple Command Line Tools are also supported when
 % MATLAB's compiler detector requires a full Xcode installation.
@@ -10,6 +10,7 @@ function build_info = build_dsc_mex()
 root = fileparts(mfilename('fullpath'));
 target_dir = fullfile(root,'toolbox');
 source = fullfile(target_dir,'dsc_corr_batch_mex.cpp');
+mean_source = fullfile(target_dir,'dsc_mean_mex.cpp');
 compiler = mex.getCompilerConfigurations('C++','Selected');
 use_command_line_tools = isempty(compiler) && ismac;
 if isempty(compiler) && ~use_command_line_tools
@@ -21,10 +22,12 @@ fprintf('DSC correlation MEX build: MATLAB %s (%s), %s\n', ...
 fprintf('Source: %s\nOutput: %s\n',source,target_dir);
 fprintf('Libraries: MATLAB bundled mwlapack and mwblas; optional std::thread workers, no OpenMP.\n');
 started = tic;
-clear dsc_corr_batch_mex
+clear dsc_corr_batch_mex dsc_mean_mex
 artifact = fullfile(target_dir,['dsc_corr_batch_mex.' mexext]);
+mean_artifact = fullfile(target_dir,['dsc_mean_mex.' mexext]);
 if use_command_line_tools
     [compiler_name,compiler_version] = build_with_command_line_tools(source,artifact);
+    build_with_command_line_tools(mean_source,mean_artifact);
     build_method = 'Apple Command Line Tools (direct compiler invocation)';
 else
     compiler = compiler(1);
@@ -36,15 +39,18 @@ else
     end
     mex('-R2018a','-O','-v',threading_flags{:},source,'-lmwlapack','-lmwblas', ...
         '-outdir',target_dir,'-output','dsc_corr_batch_mex');
+    mex('-R2018a','-O','-v',threading_flags{:},mean_source,'-lmwlapack','-lmwblas', ...
+        '-outdir',target_dir,'-output','dsc_mean_mex');
     build_method = 'MATLAB mex';
 end
 build_info = struct('artifact',artifact,'source',source, ...
+    'mean_artifact',mean_artifact,'mean_source',mean_source, ...
     'matlab_version',version,'matlab_release',version('-release'), ...
     'architecture',computer('arch'),'compiler_name',compiler_name, ...
     'compiler_version',compiler_version,'build_method',build_method,'seconds',toc(started), ...
     'libraries',{{'mwlapack','mwblas'}},'openmp',false, ...
     'native_threads_default',1,'native_threads_limit',64);
-fprintf('Built %s in %.2f seconds.\n',artifact,build_info.seconds);
+fprintf('Built %s and %s in %.2f seconds.\n',artifact,mean_artifact,build_info.seconds);
 end
 
 function [name,compiler_version] = build_with_command_line_tools(source,artifact)

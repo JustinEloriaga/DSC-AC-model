@@ -61,6 +61,8 @@ Legacy `tvsvar_modified_msv2_gam2_gen` and original MARS support functions remai
 
 ### Optional native correlation acceleration
 
+`build_dsc_mex` now builds both correlation and historical-mean smoothing kernels. The 5 October Model 1 benchmark reduced 100 retained draws from 252.8 to 33.1 seconds (86.9% less time), with matching RNG states and proposal counts. See [the 100-draw performance report](research/sampler_performance_100_draws.md) for changes, verification and MATLAB-only commands.
+
 The correlation stage supports a batched C++ MEX kernel using MATLAB's own LAPACK/BLAS. It evaluates the same matrix-log inverse and observed-subspace Gaussian likelihood, with the same convergence tolerance and positive-definiteness checks. Within the fixed-point solve, it computes only the diagonal of the matrix exponential; it builds the full correlation matrix once after convergence. Standardized residuals are reused across correlation proposals. The default four native threads evaluate separate contiguous blocks of weekly dates, with deterministic summation in date order; this does not run multiple chains. Set `cfg.correlation_threads=1` to use a single native thread.
 
 ```matlab

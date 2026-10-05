@@ -101,7 +101,13 @@ while completed<cfg.max_iterations
     stage_name='mean';
     try
         check_time(); stage=tic;
-        state.B=draw_mean(Y,obs,state.h,cache,state.V,priors,@check_time);
+        if strcmp(cfg.correlation_backend,'mex')&&exist('dsc_mean_mex','file')==3
+            state.B=dsc_mean_mex(Y,state.h,cache.P,mask,state.V, ...
+                priors.Bbar,4*priors.VBbar,randn(m,T));
+            check_time();
+        else
+            state.B=draw_mean(Y,obs,state.h,cache,state.V,priors,@check_time);
+        end
         timing.mean=timing.mean+toc(stage);
         stage_name='mean_variance'; stage=tic; err=diff(state.B,1,1); scale=err'*err+priors.V0B;
         state.V=iwishrnd((scale+scale')/2,T-1+priors.nuB);
@@ -128,11 +134,19 @@ while completed<cfg.max_iterations
             priors.r0_scale,priors.ig_shape,priors.ig_scale_r);
         timing.correlation_variance=timing.correlation_variance+toc(stage);
         stage_name='volatility'; stage=tic; ll=cached_likelihood(residual,state.h,cache_new,obs); h_proposals=0; h_invalid=0;
+        [directions,z,u]=volatility_cache(residual,state.h,cache_new,mask);
         for j=1:m
             check_time();
-            f=@(x) volatility_likelihood(x,j,state.h,residual,cache_new,obs);
+            direction=directions(:,j,:);
+            cross=reshape(sum(direction.*u,1),T,1);
+            precision=reshape(sum(direction.^2,1),T,1);
+            old_h=state.h(:,j); old_z=z(:,j);
+            f=@(x) dsc_volatility_likelihood(x,old_h,residual(:,j), ...
+                old_z,cross,precision,mask(:,j),ll);
             [state.h(:,j),ll,ntry,ninvalid]=ellipse(state.h(:,j),priors.mh0(j), ...
                 sqrt(state.sig2h(j)),priors.h0_scale,ll,f,@check_time);
+            z(:,j)=residual(:,j).*exp(-state.h(:,j)/2); z(~mask(:,j),j)=0;
+            u=u+direction.*reshape(z(:,j)-old_z,1,1,T);
             h_proposals=h_proposals+ntry; h_invalid=h_invalid+ninvalid;
         end
         timing.volatility=timing.volatility+toc(stage);
@@ -164,8 +178,8 @@ while completed<cfg.max_iterations
     diagnostics.h_invalid_proposals(end+1,1)=h_invalid;
     diagnostics.sweep_seconds(end+1,1)=toc(iteration_clock);
     if completed>cfg.burnin&&mod(completed-cfg.burnin,cfg.thin)==0
-        packed=zeros(T,nr);
-        for t=1:T, C=cache.P(:,:,t); packed(t,:)=C(sel)'; end
+        packed=reshape(cache.P,m*m,T);
+        packed=packed(sel(:),:)';
         buffer.P_pairs(:,:,end+1)=packed;
         buffer.h(:,:,end+1)=state.h;
         buffer.B(:,:,end+1)=state.B;
@@ -298,8 +312,17 @@ end
 if ~isfinite(ll), ll=-Inf; end
 end
 
-function ll=volatility_likelihood(x,j,h,E,cache,obs)
-h(:,j)=x; ll=cached_likelihood(E,h,cache,obs);
+function [directions,z,u]=volatility_cache(E,h,cache,mask)
+[T,m]=size(E); directions=zeros(m,m,T);
+[patterns,~,groups]=unique(mask,'rows');
+for k=1:size(patterns,1)
+    ix=find(patterns(k,:)); dates=find(groups==k); n=numel(ix);
+    if n==0, continue; end
+    factors=cat(3,cache.L{dates});
+    directions(1:n,ix,dates)=pagemldivide(factors,eye(n));
+end
+z=E.*exp(-h/2); z(~mask)=0;
+u=pagemtimes(directions,reshape(z',m,1,T));
 end
 
 function ll=correlation_likelihood(candidate,j,r,Z,constant,obs,m,backend,mask,threads,check)
