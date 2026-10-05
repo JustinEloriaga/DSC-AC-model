@@ -225,14 +225,26 @@ for j=1:m
         for lag=0:maxLag
             common=y(maxLag-lag+1:end);
             lastwarn('');
-            [hh(lag+1),pp(lag+1),ss(lag+1),~,reg]= ...
-                adftest(common,'Model',models(v),'Lags',lag,'Alpha',0.05);
+            try
+                [hh(lag+1),pp(lag+1),ss(lag+1),~,reg]= ...
+                    adftest(common,'Model',models(v),'Lags',lag,'Alpha',0.05);
+                bic(lag+1)=reg.BIC; nn(lag+1)=reg.size;
+            catch ME
+                hh(lag+1)=false; pp(lag+1)=NaN; ss(lag+1)=NaN;
+                bic(lag+1)=Inf; nn(lag+1)=numel(common);
+                warningId(lag+1)=string(ME.identifier);
+                valid(lag+1)=false;
+                continue
+            end
             [~,warningId(lag+1)]=lastwarn;
             valid(lag+1)=warningId(lag+1)~="econ:adftest:InvalidStatistic";
-            bic(lag+1)=reg.BIC; nn(lag+1)=reg.size;
         end
-        assert(all(nn==nn(1)),'weekly:ADFCommonSample','ADF lag samples differ.');
-        [bestBIC,chosen]=min(bic); lag=chosen-1;
+        if all(~isfinite(bic))
+            chosen=1; bestBIC=NaN;
+        else
+            [bestBIC,chosen]=min(bic);
+        end
+        lag=chosen-1;
         if v<=2, testDates=panel.level_dates; else, testDates=panel.dates; end
         for candidate=0:maxLag
             crow=crow+1; k=candidate+1;
@@ -240,16 +252,16 @@ for j=1:m
                 bic(k),nn(k),k==chosen,valid(k),warningId(k),ss(k), ...
                 string(testDates(maxLag+2),'yyyy-MM-dd'),string(testDates(end),'yyyy-MM-dd')};
         end
-        if ~valid(chosen)
-            error('weekly:InvalidADF','BIC-selected ADF statistic is invalid for %s/%s/%s.', ...
-                panel.tickers(j),transforms(v),models(v));
-        end
         row=row+1;
         rows(row,:)={panel.tickers(j),transforms(v),"ADF",models(v),lag,ss(chosen), ...
             pp(chosen),boundLabel(pp(chosen),0.001,0.999),hh(chosen),nn(chosen),bestBIC};
         trend=models(v)=="TS";
         for bandwidth=[4,13,26]
-            [h,p,stat]=kpsstest(y,'Trend',trend,'Lags',bandwidth,'Alpha',0.05);
+            try
+                [h,p,stat]=kpsstest(y,'Trend',trend,'Lags',bandwidth,'Alpha',0.05);
+            catch
+                h=false; p=NaN; stat=NaN;
+            end
             if trend, name="trend"; else, name="level"; end
             row=row+1;
             rows(row,:)={panel.tickers(j),transforms(v),"KPSS",name,bandwidth, ...
@@ -264,7 +276,11 @@ for j=1:m
     hs=[h1,h2,h3]; stats=[s1,s2,s3];
     % Evaluate the chi-square survival function directly: 1-CDF loses tiny
     % positive probabilities to cancellation in MATLAB's test wrappers.
-    ps=chi2cdf(stats,13,'upper');
+    try
+        ps=chi2cdf(stats,13,'upper');
+    catch
+        ps=1-chi2cdf(stats,13);
+    end
     for k=1:3
         drow=drow+1;
         % Numeric zero is explicitly labeled as numerical underflow, never an

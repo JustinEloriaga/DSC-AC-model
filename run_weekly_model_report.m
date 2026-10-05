@@ -28,6 +28,7 @@ arguments
     options.CorrelationThreads (1,1) double {mustBeInteger,mustBeGreaterThanOrEqual(options.CorrelationThreads,1),mustBeLessThanOrEqual(options.CorrelationThreads,64)} = 4
     options.SourceFile (1,1) string = ""
     options.OutputRoot (1,1) string = ""
+    options.VariableNames (1,:) string = "all"
     options.EstimateParameters (1,1) logical = true
     options.EstimationEndDate (1,1) string = ""
     options.ParameterDirectory (1,1) string = ""
@@ -48,6 +49,7 @@ addpath(root,fullfile(root,'toolbox'),fullfile(root,'core'),fullfile(root,'scrip
 cfg = weekly_config();
 if strlength(options.SourceFile)>0, cfg.source_file=char(options.SourceFile); end
 if strlength(options.OutputRoot)>0, cfg.output_root=char(options.OutputRoot); end
+cfg.variable_names = options.VariableNames;
 if ~exist(cfg.source_file,'file')
     error('DSC:SourceFile','Current-data source file does not exist: %s',cfg.source_file);
 end

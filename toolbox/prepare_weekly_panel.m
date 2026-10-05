@@ -7,6 +7,7 @@ function panel = prepare_weekly_panel(cfg)
 %
 %   cfg.source_file: Bloomberg-style CSV with three header rows.
 %   cfg.start_date: earliest allowed raw observation (default 2003-08-04).
+%   cfg.variable_names: "all" or selected ticker names in the requested order.
 %   cfg.closure_policy: 'asof' (default) or 'mask'. With 'mask', values remain
 %   available for audit but observation_mask excludes the two NKYTR returns
 %   touching the exceptional closure level. The sampler must honor the mask.
@@ -31,6 +32,30 @@ canonical = ["AUDUSD Index", "BCOMCOT Index", "BCOMGCTR Index", ...
     "EURUSD Index", "GBPUSD Index", "I02981JP Index", "LEATTREU Index", ...
     "LSG1TRGU Index", "LUATTRUU Index", "NKYTR Index", "SPXT Index", ...
     "SX5T Index", "TUKXG Index", "USDJPY Index"];
+canonicalLabels = ["AUD/USD", "Brent total return", "Gold total return", ...
+    "EUR/USD", "GBP/USD", "Japan government bonds", "Euro-area Treasuries", ...
+    "UK gilts", "US Treasuries", "Japan equities", "US equities", ...
+    "Euro-area equities", "UK equities", "USD/JPY"];
+if isfield(cfg, 'variable_names') && ~isempty(cfg.variable_names)
+    requested = string(cfg.variable_names);
+else
+    requested = "all";
+end
+requested = requested(:)';
+if numel(requested) == 1 && lower(strtrim(requested)) == "all"
+    selected = 1:numel(canonical);
+else
+    [presentRequested, selected] = ismember(requested, canonical);
+    if ~all(presentRequested) || numel(unique(selected)) ~= numel(selected)
+        error('weekly:VariableNames', ...
+            'cfg.variable_names must be "all" or unique supported ticker names.');
+    end
+    if numel(selected) < 2
+        error('weekly:VariableNames', 'At least two variables are required.');
+    end
+end
+selectedCanonical = canonical(selected);
+selectedLabels = canonicalLabels(selected);
 sourceFile = char(java.io.File(char(cfg.source_file)).getCanonicalPath());
 lines = readlines(sourceFile);
 if numel(lines) < 5
@@ -45,6 +70,7 @@ end
 if ~all(present) || any(~ismember(rawTickers, [canonical, "USDCNH Index"]))
     error('weekly:Tickers', 'Expected the 14 supported tickers, optionally with USDCNH.');
 end
+columns = columns(selected);
 opts = delimitedTextImportOptions('NumVariables', numel(rawTickers)+1);
 opts.DataLines = [4 Inf];
 opts.Delimiter = ',';
@@ -80,7 +106,7 @@ if numel(levelDates) < 2
     error('weekly:ShortSample', 'At least two complete weeks of levels are required.');
 end
 nLevels = numel(levelDates);
-m = numel(canonical);
+m = numel(selectedCanonical);
 levels = nan(nLevels,m);
 sourceDates = NaT(nLevels,m);
 ageDays = nan(nLevels,m);
@@ -88,26 +114,26 @@ closure = false(nLevels,m);
 for j = 1:m
     observed = find(isfinite(rawLevels(:,j)));
     if isempty(observed)
-        error('weekly:MissingEndpoint', 'No observed levels for %s.', canonical(j));
+        error('weekly:MissingEndpoint', 'No observed levels for %s.', selectedCanonical(j));
     end
     bins = discretize(datenum(levelDates), [datenum(rawDates(observed)); Inf]);
     if any(isnan(bins))
         bad = find(isnan(bins),1);
         error('weekly:MissingEndpoint', 'No past level for %s at %s.', ...
-            canonical(j), string(levelDates(bad),'yyyy-MM-dd'));
+            selectedCanonical(j), string(levelDates(bad),'yyyy-MM-dd'));
     end
     indices = observed(bins);
     levels(:,j) = rawLevels(indices,j);
     sourceDates(:,j) = rawDates(indices);
     ageDays(:,j) = days(levelDates-sourceDates(:,j));
-    closure(:,j) = canonical(j) == "NKYTR Index" & ...
+    closure(:,j) = selectedCanonical(j) == "NKYTR Index" & ...
         levelDates == datetime(2019,5,3) & ...
         sourceDates(:,j) == datetime(2019,4,26) & ageDays(:,j) == 7;
     bad = find(ageDays(:,j) > 4 & ~closure(:,j),1);
     if ~isempty(bad)
         error('weekly:UnexplainedGap', ...
             '%s endpoint %s is %g days old (source %s); investigate before estimation.', ...
-            canonical(j), string(levelDates(bad),'yyyy-MM-dd'), ageDays(bad,j), ...
+            selectedCanonical(j), string(levelDates(bad),'yyyy-MM-dd'), ageDays(bad,j), ...
             string(sourceDates(bad,j),'yyyy-MM-dd'));
     end
 end
@@ -129,11 +155,8 @@ clear cleanup
 panel = struct();
 panel.dates = levelDates(2:end);
 panel.level_dates = levelDates;
-panel.tickers = canonical;
-panel.labels = ["AUD/USD", "Brent total return", "Gold total return", ...
-    "EUR/USD", "GBP/USD", "Japan government bonds", "Euro-area Treasuries", ...
-    "UK gilts", "US Treasuries", "Japan equities", "US equities", ...
-    "Euro-area equities", "UK equities", "USD/JPY"];
+panel.tickers = selectedCanonical;
+panel.labels = selectedLabels;
 panel.levels = levels;
 panel.returns = returns;
 panel.source_dates = sourceDates;

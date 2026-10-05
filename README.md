@@ -4,6 +4,9 @@ Reproducible weekly analysis of 14 market series, excluding USDCNH. The first-st
 
 ## Quick start
 
+For a practical map of the files, model entry points, Model 1 wrapper, and all
+public run options, see [MODEL_README.md](MODEL_README.md).
+
 For the configurable end-to-end workflow that runs the model, creates the Bayesian correlation paths, and compiles the report, see [RUN_MODEL_AND_REPORT.md](RUN_MODEL_AND_REPORT.md). The entry point separates warm-up iterations from retained draws:
 
 ```matlab
@@ -62,6 +65,8 @@ Each analysis saves configuration, source SHA-256, MATLAB version, Git revision/
 Legacy `tvsvar_modified_msv2_gam2_gen` and original MARS support functions remain for historical reproducibility. They are not used by `main` or the weekly workflow. Do not run the old convergence scripts on new pilot files or interpret old MARS outputs as this dataset.
 
 ### Optional native correlation acceleration
+
+`build_dsc_mex` now builds both correlation and historical-mean smoothing kernels. The 5 October Model 1 benchmark reduced 100 retained draws from 252.8 to 33.1 seconds (86.9% less time), with matching RNG states and proposal counts. See [the 100-draw performance report](research/sampler_performance_100_draws.md) for changes, verification and MATLAB-only commands.
 
 The correlation stage supports a batched C++ MEX kernel using MATLAB's own LAPACK/BLAS. It evaluates the same matrix-log inverse and observed-subspace Gaussian likelihood, with the same convergence tolerance and positive-definiteness checks. Within the fixed-point solve, it computes only the diagonal of the matrix exponential; it builds the full correlation matrix once after convergence. Standardized residuals are reused across correlation proposals. The default four native threads evaluate separate contiguous blocks of weekly dates, with deterministic summation in date order; this does not run multiple chains. Set `cfg.correlation_threads=1` to use a single native thread.
 

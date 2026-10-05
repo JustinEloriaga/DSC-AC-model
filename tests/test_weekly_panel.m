@@ -34,6 +34,31 @@ verifyEqual(testCase,p.source_hash, ...
 verifyEqual(testCase,p.excluded_final_rows,4);
 end
 
+function testSelectedVariablesUseCanonicalSubset(testCase)
+cfg=struct('source_file',fullfile(testCase.TestData.root,'data', ...
+    'yad_tickers_no_usdcnh_from_20030804.csv'), ...
+    'variable_names',["NKYTR Index","SPXT Index","SX5T Index","TUKXG Index"]);
+p=prepare_weekly_panel(cfg);
+allp=prepare_weekly_panel(rmfield(cfg,'variable_names'));
+verifyEqual(testCase,p.tickers,["NKYTR Index","SPXT Index","SX5T Index","TUKXG Index"]);
+verifyEqual(testCase,p.labels,["Japan equities","US equities","Euro-area equities","UK equities"]);
+verifySize(testCase,p.returns,[1204,4]);
+verifySize(testCase,p.levels,[1205,4]);
+verifyEqual(testCase,numel(p.pair_i),6);
+verifyEqual(testCase,p.returns,allp.returns(:,10:13),'AbsTol',1e-12);
+verifyEqual(testCase,p.levels,allp.levels(:,10:13),'AbsTol',1e-12);
+verifyEqual(testCase,p.observation_mask,allp.observation_mask(:,10:13));
+end
+
+function testSelectedVariablesRejectUnknownOrDuplicateNames(testCase)
+cfg=struct('source_file',fullfile(testCase.TestData.root,'data', ...
+    'yad_tickers_no_usdcnh_from_20030804.csv'), ...
+    'variable_names',["SPXT Index","SPXT Index"]);
+verifyError(testCase,@()prepare_weekly_panel(cfg),'weekly:VariableNames');
+cfg.variable_names=["SPXT Index","NOTREAL Index"];
+verifyError(testCase,@()prepare_weekly_panel(cfg),'weekly:VariableNames');
+end
+
 function testFridayMissingUsesOwnThursdayOnly(testCase)
 dates=weekdaysBetween(datetime(2020,1,6),datetime(2020,1,31));
 levels=syntheticLevels(numel(dates));

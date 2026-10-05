@@ -3,6 +3,7 @@ function cfg = weekly_config()
 root = fileparts(mfilename('fullpath'));
 cfg.source_file = fullfile(root,'data','yad_tickers_no_usdcnh_from_20030804.csv');
 cfg.start_date = '2003-08-04';
+cfg.variable_names = "all"; % "all" keeps every supported ticker in canonical order.
 cfg.closure_policy = 'asof';
 cfg.output_root = fullfile(root,'outputs','weekly_research');
 cfg.freq = 'weekly';

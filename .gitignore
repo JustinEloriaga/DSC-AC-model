@@ -29,3 +29,4 @@ __pycache__/
 /outputs/weekly_research/runs/**/posterior_chunk_*.mat
 # Native acceleration is rebuilt locally for the installed MATLAB/platform.
 /toolbox/dsc_corr_batch_mex.mex*
+/toolbox/dsc_mean_mex.mex*
