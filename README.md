@@ -18,7 +18,6 @@ Set `EstimateParameters=true, EstimationEndDate="2020-12-25"` to estimate throug
 MATLAB R2024b with Statistics and Machine Learning and Econometrics toolboxes was verified locally. From the repository root:
 
 ```matlab
-main                                      % data analysis and prior calibration only
 results = run_weekly_research('analysis'); % same workflow, explicit entrypoint
 checks = run_weekly_acceptance();          % tests plus saved JSON evidence
 results = run_weekly_research('pilot');    % at most 20 sweeps or 30 minutes

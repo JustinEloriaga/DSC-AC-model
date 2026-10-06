@@ -441,10 +441,8 @@ def make_bayesian_paths(args, write, figures, data_summary):
         return None
     run = args.posterior_run.resolve()
     summary_path = run / "pilot_summary.json"
-    manifest_path = run / "figures/bayes_correlation_paths_manifest.json"
     run_manifest_path = run / "run_manifest.json"
-    required = [summary_path, manifest_path, run_manifest_path,
-                run / "figures/bayes_correlation_paths_selected.pdf"]
+    required = [summary_path, run_manifest_path]
     required += [run / f"figures/bayes_correlation_paths_all_{page:02d}.pdf" for page in range(1, 12)]
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
@@ -452,20 +450,15 @@ def make_bayesian_paths(args, write, figures, data_summary):
     if args.pilot and args.pilot.resolve() != summary_path:
         raise ValueError("--pilot and --posterior-run must refer to the same sampler run")
     sampler = json.loads(summary_path.read_text())
-    paths = json.loads(manifest_path.read_text())
     run_manifest = json.loads(run_manifest_path.read_text())
     if run_manifest.get("source_hash") != data_summary["source_hash"]:
         raise ValueError("Posterior paths and publication data have different source hashes")
-    draws = int(paths["retained_draws"])
-    warmup = int(paths["warmup_removed"])
+    draws = int(sampler.get("saved_draws", 0))
+    warmup = int(sampler.get("burnin", 0))
     if draws < 2 or draws != int(sampler.get("saved_draws", -1)):
         raise ValueError("Posterior-path draw count disagrees with the sampler summary")
-    if paths.get("color_scale") != [-1, 1] or "Continuous RdBu_r" not in paths.get("color_rule", ""):
-        raise ValueError("Posterior paths must use the Figure 1 continuous correlation scale")
     if warmup != int(sampler.get("burnin", warmup)):
         raise ValueError("Posterior-path warm-up count disagrees with the sampler summary")
-    if paths.get("run_dir") and Path(paths["run_dir"]).resolve() != run:
-        raise ValueError("Posterior-path manifest belongs to a different sampler run")
     inference = read_inference_metadata(run, sampler, paths, run_manifest, data_summary)
     convergence_text = saved_convergence_text(run, sampler, inference)
     chains = int(sampler.get("num_chains", 1))
@@ -477,11 +470,8 @@ def make_bayesian_paths(args, write, figures, data_summary):
             counts = [counts]
         if len(counts) != chains or sum(counts) != draws:
             raise ValueError("Per-chain counts disagree with pooled draws")
-    selected_source = run / "figures/bayes_correlation_paths_selected.pdf"
-    selected_target = figures / "bayesian_paths_selected.pdf"
-    shutil.copy2(selected_source, selected_target)
     pages = []
-    copied = [selected_target]
+    copied = []
     for page in range(1, 12):
         source = run / f"figures/bayes_correlation_paths_all_{page:02d}.pdf"
         target = figures / f"bayesian_paths_all_{page:02d}.pdf"
@@ -541,13 +531,7 @@ def make_bayesian_paths(args, write, figures, data_summary):
           "contains the pointwise 16th and 84th percentiles. Vertical colors use the same continuous scale "
           "as Figure~1: blue for negative values, white near zero, and red for positive values, with intensity "
           "set by the posterior median. " + status_text + "\n"
-          "\\begin{figure}[p]\\centering\n"
-          "\\includegraphics[width=\\linewidth,height=.80\\textheight,keepaspectratio]"
-          "{generated/figures/bayesian_paths_selected.pdf}\n"
-          "\\caption{Selected smoothed conditional innovation-correlation paths. The intervals are pointwise "
-          + band_text + "}\n"
-          "\\end{figure}\n"
-          "\\clearpage\n"
+          "The complete pairwise path figures are supplied in the companion PDF.\n\\clearpage\n"
           "\\textbf{Companion figure file.} The complete set of 91 Bayesian correlation paths is generated as "
           "\\texttt{weekly\\_correlation\\_paths.pdf}. Each page uses the same vertical scale, color scale, "
           "and posterior summaries for every pair.\\par\n"

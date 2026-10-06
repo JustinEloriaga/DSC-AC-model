@@ -213,7 +213,8 @@ for p=1:numel(patterns)
 end
 % These JSON files are runtime handoffs and are reproducible from the
 % retained chunks, result, manifest, and convergence diagnostics.
-for name={'pilot_summary.json','inference_metadata.json','prior_summary.json'}
+for name={'pilot_summary.json','inference_metadata.json','prior_summary.json', ...
+        'bayes_correlation_paths_manifest.json'}
     files=dir(fullfile(run_dir,'**',name{1}));
     for k=1:numel(files)
         if ~files(k).isdir, delete(fullfile(files(k).folder,files(k).name)); end

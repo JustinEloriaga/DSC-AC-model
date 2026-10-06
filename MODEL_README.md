@@ -251,7 +251,6 @@ convergence pass/fail decision.
 | `run_weekly_research.m` | Lower-level analysis/pilot workflow used by the main runner. |
 | `run_weekly_pilot.m` | Bounded sampler pilot helper. |
 | `run_weekly_acceptance.m` | Acceptance checks for the MATLAB workflow. |
-| `main.m` | Simple analysis entry point. |
 | `build/build_dsc_mex.m` | Builds the native correlation and historical-mean smoothing MEX kernels. |
 
 ### Core Model Functions

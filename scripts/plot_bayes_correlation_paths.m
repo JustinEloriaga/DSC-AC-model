@@ -59,12 +59,8 @@ save(fullfile(run_dir,'posterior_correlation_bands.mat'), ...
     'draw_chain_ids','chain_ids','chain_dirs','retained_draws_per_chain','warmup_per_chain','-v7.3');
 
 pair_labels = erase(tickers(pair_i)," Index") + " / " + erase(tickers(pair_j)," Index");
-selected = select_pairs(median_path,pair_labels);
 pages = ceil(numel(pair_labels)/9);
-figure_paths = strings(pages+1,1);
-figure_paths(1) = plot_page(fullfile(fig_dir,'bayes_correlation_paths_selected.pdf'), ...
-    dates, median_path, lower, upper, pair_labels, selected, ...
-    'Selected Bayesian correlation paths',inference,convergence_established,draw_note,true);
+figure_paths = strings(pages,1);
 
 for page = 1:pages
     ix = (page-1)*9 + (1:9);
@@ -73,23 +69,6 @@ for page = 1:pages
         dates, median_path, lower, upper, pair_labels, ix, ...
         sprintf('All Bayesian correlation paths, page %d of %d',page,pages),inference,convergence_established,draw_note,false);
 end
-manifest=struct('run_dir',run_dir,'retained_draws',size(P,3),'warmup_removed',warmup, ...
-    'num_chains',numel(chain_ids),'chain_ids',chain_ids,'chain_dirs',{chain_dirs}, ...
-    'retained_draws_per_chain',retained_draws_per_chain,'warmup_removed_per_chain',warmup_per_chain, ...
-    'draw_chain_ids',draw_chain_ids,'retained_iterations',iterations, ...
-    'paths',{cellstr(figure_paths)},'color_scale',[-1 1], ...
-    'first_date',char(string(dates(1),'yyyy-MM-dd')),'last_date',char(string(dates(end),'yyyy-MM-dd')), ...
-    'color_rule','Continuous RdBu_r scale applied to the posterior median correlation.', ...
-    'created_at',char(datetime('now','Format','yyyy-MM-dd''T''HH:mm:ss')), ...
-    'note',sprintf('%d pooled retained draws across %d chains after %d warm-up iterations per chain; pointwise 16/50/84 percentiles; convergence established: %s.', ...
-    size(P,3),numel(chain_ids),warmup,boolean_text(convergence_established)));
-raw_inference='';
-if ~isempty(inference)
-    % jsondecode converts JSON null to [] and singleton object arrays to
-    % structs. Preserve the verified source JSON when copying provenance.
-    raw_inference=fileread(fullfile(run_dir,'inference_metadata.json'));
-end
-write_json_local(fullfile(fig_dir,'bayes_correlation_paths_manifest.json'),manifest,raw_inference);
 end
 
 function validate_plot_convergence(run_dir,summary,ids,counts,T,m,established)
@@ -193,15 +172,6 @@ end
 if numel(unique(ids))~=numel(ids)
     error('DSC:PathIdentity','Posterior directories must have distinct original chain IDs.');
 end
-end
-
-function selected = select_pairs(median_path,pair_labels)
-range = max(median_path,[],1) - min(median_path,[],1);
-score = max(abs(median_path),[],1) + range;
-[~,order] = sort(score,'descend');
-must = find(pair_labels=="TUKXG / SX5T" | pair_labels=="SX5T / BCOMCOT");
-selected = unique([must(:)' order(1:min(6,numel(order)))],'stable');
-selected = selected(1:min(6,numel(selected)));
 end
 
 function path = plot_page(path,dates,median_path,lower,upper,pair_labels,indices,title_text,inference,convergence_established,draw_note,show_header)
