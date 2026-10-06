@@ -207,6 +207,10 @@ names=fieldnames(defaults);
 for k=1:numel(names)
     if ~isfield(cfg,names{k}), cfg.(names{k})=defaults.(names{k}); end
 end
+if isfield(cfg,'chunk_size') && isfinite(cfg.chunk_size) && cfg.chunk_size>0
+    cfg.check_every=cfg.chunk_size;
+    cfg.min_diagnostic_draws=cfg.chunk_size;
+end
 for name={'num_chains','check_every','max_retained_draws','min_diagnostic_draws','chain_id'}
     value=cfg.(name{1});
     if ~isnumeric(value)||~isreal(value)||~isscalar(value)||~isfinite(value)||value<1||value~=floor(value)

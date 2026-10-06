@@ -4,13 +4,41 @@ This repository runs the weekly Bayesian dynamic-correlation model in MATLAB.
 The current applied example is Model 1, using NKYTR Index, SPXT Index, SX5T
 Index, and TUKXG Index.
 
+## First-Time MEX Setup On This Mac
+
+The default correlation backend is the compiled MEX backend. In MATLAB R2024b
+on this Mac, run the following once from the repository root:
+
+    addpath("toolbox","build");
+    mex -setup C++
+    build_dsc_mex
+
+Choose the configured C++ compiler when MATLAB asks. If MATLAB cannot find a
+compiler, install Apple's Command Line Tools in Terminal with
+`xcode-select --install`, restart MATLAB, and run the commands again. The
+builder detects whether MATLAB is running on Apple Silicon or Intel and creates
+the two matching files in `toolbox/`:
+
+    dsc_corr_batch_mex.<mex extension>
+    dsc_mean_mex.<mex extension>
+
+Verify the build with:
+
+    assert(exist("dsc_corr_batch_mex","file") == 3);
+    assert(exist("dsc_mean_mex","file") == 3);
+
+This compilation is computer-specific. If the repository is copied to another
+computer, rebuild the MEX files there rather than copying the compiled files.
+
 ## Run Model 1
 
 From the repository root in MATLAB:
 
-    result = run_weekly_model1_report( ...
+    result = run_weekly_model_report( ...
         WarmupIterations=100, RetainedDraws=50000, ...
         NumChains=4, MaxHours=12, ...
+        VariableNames=["NKYTR Index","SPXT Index","SX5T Index","TUKXG Index"], ...
+        OutputRoot="outputs/weekly_research_model", ...
         ParameterSmoothing="draws", CorrelationBackend="mex");
 
 The model reads data/yad_tickers_no_usdcnh_from_20030804.csv, prepares weekly
@@ -20,62 +48,66 @@ figures.
 
 ## Options
 
-    WarmupIterations       Initial iterations discarded per chain.
-    RetainedDraws          Target saved draws per chain.
-    NumChains              Number of independent chains.
-    MaxHours               Maximum runtime.
-    Thin                   Save every Thin-th post-warm-up iteration.
-    ChunkSize              Draws stored in each posterior chunk file.
-    ParameterSmoothing     "draws" or "mean".
-    CorrelationBackend     "mex" or "matlab".
-    CorrelationThreads     Threads used by correlation calculations.
-    RunTests               Run acceptance tests before estimation.
-    BuildReport            Build the publication report.
-    VerifyReport           Verify the publication report.
+    WarmupIterations       Initial iterations discarded per chain. DEFAULT: 10.
+    RetainedDraws          Target saved draws per chain. DEFAULT: 100.
+    NumChains              Number of independent chains. DEFAULT: 1.
+    ChainID                First chain identifier. DEFAULT: 1.
+    MaxHours               Maximum runtime. DEFAULT: 12.
+    Thin                   Save every Thin-th post-warm-up iteration. DEFAULT: 1.
+    ChunkSize              Draws per chunk and convergence-check interval. DEFAULT: 1000.
+    Seed                   Random-number seed. DEFAULT: 20260914.
+    ParallelChains         Run chains concurrently. DEFAULT: false.
+    ConvergenceMode        "off" or "report". DEFAULT: "report".
+    AutoExtend             Extend sampling until convergence or cap. DEFAULT: false.
+    MaxRetainedDraws       Maximum draws per chain when extending. DEFAULT: 2000.
+    RhatThreshold          Maximum accepted R-hat. DEFAULT: 1.01.
+    MinESS                 Minimum bulk and tail ESS. DEFAULT: 400.
+    MaxMCSERatio            Maximum MCSE/posterior-SD ratio. DEFAULT: 0.05.
+    EstimateParameters     Estimate parameters, then smooth P and h. DEFAULT: true.
+    EstimationEndDate      Optional estimation cutoff date. DEFAULT: "".
+    SourceFile             Input CSV. DEFAULT: configured Model 1 CSV.
+    OutputRoot             Output directory. DEFAULT: configured output root.
+    VariableNames          Tickers to estimate. DEFAULT: "all".
+    ParameterDirectory     Saved-parameter directory. DEFAULT: OutputRoot/parameters.
+    ParameterSmoothing     "draws" or "mean". MODEL 1 DEFAULT: "draws".
+    CorrelationBackend     "mex" or "matlab". DEFAULT: "mex".
+    CorrelationThreads     Threads for correlation calculations. DEFAULT: "auto".
+                            "auto" requires RunTests=true. If RunTests=false,
+                            MATLAB writes a warning and enables RunTests.
+                            A fixed integer from 1 to 64 may be supplied instead.
+    RunTests               Run acceptance tests before estimation. DEFAULT: true.
+    BuildReport            Build the publication report. MODEL 1 DEFAULT: false.
+    VerifyReport           Verify the publication report. MODEL 1 DEFAULT: false.
+    PythonExecutable       Python used for report building. DEFAULT: "python3".
     KeepNewestParameterFiles
-                            Number of parameter snapshots to retain; default 3.
-    KeepIntermediateArtifacts
-                            Default false; remove regenerable handoff files.
+                            Parameter snapshots to retain. DEFAULT: 3.
 
+When EstimateParameters=false, the model automatically loads the newest
+compatible saved parameter file and performs only smoothing of P and h.
 Short test:
 
-    result = run_weekly_model1_report( ...
+    result = run_weekly_model_report( ...
         WarmupIterations=10, RetainedDraws=100, NumChains=1, ...
-        MaxHours=1, BuildReport=false, VerifyReport=false);
+        MaxHours=1, BuildReport=false, VerifyReport=false, ...
+        VariableNames=["NKYTR Index","SPXT Index","SX5T Index","TUKXG Index"]);
 
 ## Outputs
 
-The default output directory is outputs/weekly_research_model1/.
-Each run is stored under outputs/weekly_research_model1/runs/<run-id>/.
+The default output directory for this four-ticker example is
+outputs/weekly_research_model/.
+Each run is stored under outputs/weekly_research_model/runs/<run-id>/.
 
 Permanent results include:
 
     chains/                                  Posterior draw chunks.
-    result.mat                               Aggregated run result.
     run_manifest.json                        Data and code provenance.
     convergence/convergence_diagnostics.json Convergence results.
     convergence/chain_mean_paths.pdf         Chain means for P and h entries.
     figures/                                 Bayesian correlation-path PDFs.
     latest_model_report.json                 Summary of the newest run.
 
-Temporary panel-analysis files and regenerable run handoffs are removed after
-the run by default. Set KeepIntermediateArtifacts=true only for debugging.
+Temporary panel-analysis files and regenerable run handoffs are always removed
+after the run. There is no option to retain them.
 
-## Data And Parameters
-
-The raw CSV is never modified. Levels are converted to weekly percent
-log-returns using each market's latest observation on or before Friday.
-
-Saved parameter files are kept under outputs/weekly_research_model1/parameters/.
-The newest three are retained by default. To load an existing parameter file:
-
-    result = run_weekly_model1_report( ...
-        EstimateParameters=false, ...
-        ParameterFile="/absolute/path/to/dsc_parameters_file.mat");
-
-## Other Entry Points
-
-    run_weekly_research('analysis')  Prepare data and priors only.
-    run_weekly_acceptance()           Run MATLAB acceptance tests.
-
-run_weekly_model1_report is the recommended entry point.
+`run_weekly_model_report` is the single entry point. Select the variables with
+`VariableNames`; Model 1 is the four-ticker example above.

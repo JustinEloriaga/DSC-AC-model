@@ -11,30 +11,26 @@ arguments
     options.RetainedDraws (1,1) double {mustBeInteger,mustBeGreaterThanOrEqual(options.RetainedDraws,2)} = 100
     options.Thin (1,1) double {mustBeInteger,mustBePositive} = 1
     options.MaxHours (1,1) double {mustBePositive,mustBeFinite} = 12
-    options.ChunkSize (1,1) double {mustBeInteger,mustBePositive} = 10
+    options.ChunkSize (1,1) double {mustBeInteger,mustBePositive} = 1000
     options.Seed (1,1) double {mustBeInteger,mustBeNonnegative} = 20260914
     options.ChainID (1,1) double {mustBeInteger,mustBePositive} = 1
     options.NumChains (1,1) double {mustBeInteger,mustBePositive} = 1
     options.ParallelChains (1,1) logical = false
     options.ConvergenceMode (1,1) string {mustBeMember(options.ConvergenceMode,["off","report"])} = "report"
     options.AutoExtend (1,1) logical = false
-    options.CheckEvery (1,1) double {mustBeInteger,mustBePositive} = 250
     options.MaxRetainedDraws (1,1) double {mustBeInteger,mustBeGreaterThanOrEqual(options.MaxRetainedDraws,2)} = 2000
-    options.MinDiagnosticDraws (1,1) double {mustBeInteger,mustBeGreaterThanOrEqual(options.MinDiagnosticDraws,6)} = 100
     options.RhatThreshold (1,1) double {mustBeGreaterThan(options.RhatThreshold,1),mustBeFinite} = 1.01
     options.MinESS (1,1) double {mustBePositive,mustBeFinite} = 400
     options.MaxMCSERatio (1,1) double {mustBePositive,mustBeFinite} = 0.05
     options.CorrelationBackend (1,1) string {mustBeMember(options.CorrelationBackend,["auto","mex","matlab"])} = "mex"
-    options.CorrelationThreads (1,1) double {mustBeInteger,mustBeGreaterThanOrEqual(options.CorrelationThreads,1),mustBeLessThanOrEqual(options.CorrelationThreads,64)} = 4
+    options.CorrelationThreads = "auto"
     options.SourceFile (1,1) string = ""
     options.OutputRoot (1,1) string = ""
     options.VariableNames (1,:) string = "all"
     options.EstimateParameters (1,1) logical = true
     options.EstimationEndDate (1,1) string = ""
     options.ParameterDirectory (1,1) string = ""
-    options.ParameterFile (1,1) string = ""
     options.KeepNewestParameterFiles (1,1) double {mustBeInteger,mustBeNonnegative} = 3
-    options.KeepIntermediateArtifacts (1,1) logical = false
     options.ParameterSmoothing (1,1) string {mustBeMember(options.ParameterSmoothing,["draws","mean"])} = "mean"
     options.RunTests (1,1) logical = true
     options.BuildReport (1,1) logical = true
@@ -44,6 +40,24 @@ end
 
 if options.VerifyReport && ~options.BuildReport
     error('DSC:PipelineOptions','VerifyReport requires BuildReport=true.');
+end
+if isstring(options.CorrelationThreads) || ischar(options.CorrelationThreads)
+    thread_text=string(options.CorrelationThreads);
+    if thread_text=="auto"
+        if ~options.RunTests
+            warning('DSC:AutoThreadsNeedsTests', ...
+                'CorrelationThreads="auto" requires RunTests=true; enabling RunTests automatically.');
+            options.RunTests=true;
+        end
+        options.CorrelationThreads=min(4,feature('numcores'));
+    else
+        options.CorrelationThreads=str2double(thread_text);
+    end
+end
+if ~isscalar(options.CorrelationThreads)||~isfinite(options.CorrelationThreads)|| ...
+        options.CorrelationThreads<1||options.CorrelationThreads~=floor(options.CorrelationThreads)|| ...
+        options.CorrelationThreads>64
+    error('DSC:CorrelationThreads','CorrelationThreads must be "auto" or an integer from 1 to 64.');
 end
 root = fileparts(mfilename('fullpath'));
 addpath(root,fullfile(root,'toolbox'),fullfile(root,'scripts'));
@@ -66,9 +80,9 @@ cfg.num_chains = options.NumChains;
 cfg.parallel_chains = options.ParallelChains;
 cfg.convergence_mode = char(options.ConvergenceMode);
 cfg.auto_extend = options.AutoExtend;
-cfg.check_every = options.CheckEvery;
+cfg.check_every = cfg.chunk_size;
 cfg.max_retained_draws = options.MaxRetainedDraws;
-cfg.min_diagnostic_draws = options.MinDiagnosticDraws;
+cfg.min_diagnostic_draws = cfg.chunk_size;
 cfg.rhat_threshold = options.RhatThreshold;
 cfg.min_ess = options.MinESS;
 cfg.max_mcse_ratio = options.MaxMCSERatio;
@@ -78,7 +92,7 @@ cfg.correlation_threads = options.CorrelationThreads;
 cfg.estimate_parameters = options.EstimateParameters;
 cfg.estimation_end_date = char(options.EstimationEndDate);
 cfg.parameter_dir = char(options.ParameterDirectory);
-cfg.parameter_file = char(options.ParameterFile);
+cfg.parameter_file = '';
 cfg.parameter_smoothing = char(options.ParameterSmoothing);
 cfg.write_publication_exports = options.BuildReport;
 cfg.keep_newest_parameter_files = options.KeepNewestParameterFiles;
@@ -107,8 +121,7 @@ stamp = char(datetime('now','Format','yyyyMMdd-HHmmss-SSS'));
 run_name = sprintf('%s-chain%d-w%d-r%d-thin%d',stamp,cfg.chain_id,cfg.burnin,options.RetainedDraws,cfg.thin);
 run_dir = fullfile(cfg.output_root,'runs',run_name);
 if ~exist(run_dir,'dir'), mkdir(run_dir); end
-intermediate_cleanup = onCleanup(@()delete_intermediate_run_files( ...
-    run_dir,options.KeepIntermediateArtifacts)); %#ok<NASGU>
+intermediate_cleanup = onCleanup(@()delete_intermediate_run_files(run_dir)); %#ok<NASGU>
 run_manifest = analysis.manifest;
 run_manifest.run_kind = 'configurable sampler and report pipeline';
 run_manifest.requested_warmup_iterations = options.WarmupIterations;
@@ -161,7 +174,7 @@ if options.BuildReport
     end
 end
 
-latest = struct('run_dir',run_dir,'summary',fullfile(run_dir,'result.mat'), ...
+latest = struct('run_dir',run_dir,'summary',fullfile(cfg.output_root,'latest_model_report.json'), ...
     'figures',fullfile(run_dir,'figures'),'report_pdf',result.report_pdf, ...
     'requested_retained_draws',options.RetainedDraws, ...
     'requested_retained_draws_per_chain',options.RetainedDraws, ...
@@ -175,6 +188,13 @@ latest.manifest=run_manifest;
 latest.num_chains=cfg.num_chains;
 latest.actual_retained_draws_per_chain=result.saved_draws_per_chain;
 latest.convergence=result.convergence;
+latest.run_result=struct('status',result.status,'reason',result.reason, ...
+    'completed_iterations',result.completed_iterations, ...
+    'completed_iterations_per_chain',result.completed_iterations_per_chain, ...
+    'saved_draws_total',result.saved_draws, ...
+    'saved_draws_per_chain',result.saved_draws_per_chain, ...
+    'chain_ids',result.chain_ids,'seeds',result.seeds, ...
+    'total_seconds',result.total_seconds,'stage_seconds',result.stage_seconds);
 write_json_local(fullfile(cfg.output_root,'latest_model_report.json'),latest);
 end
 
@@ -201,9 +221,8 @@ for k=keep_count+1:numel(order)
 end
 end
 
-function delete_intermediate_run_files(run_dir,keep_files)
+function delete_intermediate_run_files(run_dir)
 % Remove files that can be regenerated from retained posterior chunks.
-if keep_files, return; end
 patterns = {'posterior_correlation_bands.mat','*.DS_Store'};
 for p=1:numel(patterns)
     files=dir(fullfile(run_dir,'**',patterns{p}));
@@ -229,6 +248,8 @@ for c=1:numel(chain_dirs)
         if isfile(path), delete(path); end
     end
 end
+root_result=fullfile(run_dir,'result.mat');
+if isfile(root_result), delete(root_result); end
 end
 
 function value = shell_arg(value)
