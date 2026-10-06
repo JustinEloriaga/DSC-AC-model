@@ -155,6 +155,7 @@ tickers and defaults `ParameterSmoothing` to `"draws"`.
 | `ParameterDirectory` | `""` | Directory containing saved parameter files. Empty uses `OutputRoot/parameters`. |
 | `ParameterFile` | `""` | Exact saved parameter file to load. Empty selects the latest. |
 | `KeepNewestParameterFiles` | `3` | Keep only this many newest saved parameter files at the end of the run. Set `0` to disable cleanup. |
+| `KeepIntermediateArtifacts` | `false` | Delete regenerable per-chain summaries, cached correlation bands, checkpoints, and Finder metadata after the run. Set `true` only for debugging. |
 | `ParameterSmoothing` | `"mean"` | `"mean"` uses posterior mean parameters; `"draws"` propagates saved parameter draws. Model 1 defaults this option to `"draws"`. |
 | `RunTests` | `true` | Run acceptance checks before the model. |
 | `BuildReport` | `true` | Build the publication report after sampling. |

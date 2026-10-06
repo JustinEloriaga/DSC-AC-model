@@ -34,6 +34,7 @@ arguments
     options.ParameterDirectory (1,1) string = ""
     options.ParameterFile (1,1) string = ""
     options.KeepNewestParameterFiles (1,1) double {mustBeInteger,mustBeNonnegative} = 3
+    options.KeepIntermediateArtifacts (1,1) logical = false
     options.ParameterSmoothing (1,1) string {mustBeMember(options.ParameterSmoothing,["draws","mean"])} = "mean"
     options.RunTests (1,1) logical = true
     options.BuildReport (1,1) logical = true
@@ -106,6 +107,8 @@ stamp = char(datetime('now','Format','yyyyMMdd-HHmmss-SSS'));
 run_name = sprintf('%s-chain%d-w%d-r%d-thin%d',stamp,cfg.chain_id,cfg.burnin,options.RetainedDraws,cfg.thin);
 run_dir = fullfile(cfg.output_root,'runs',run_name);
 if ~exist(run_dir,'dir'), mkdir(run_dir); end
+intermediate_cleanup = onCleanup(@()delete_intermediate_run_files( ...
+    run_dir,options.KeepIntermediateArtifacts)); %#ok<NASGU>
 run_manifest = analysis.manifest;
 run_manifest.run_kind = 'configurable sampler and report pipeline';
 run_manifest.requested_warmup_iterations = options.WarmupIterations;
@@ -194,6 +197,27 @@ if numel(files) <= keep_count, return; end
 [~,order] = sort({files.name},'descend');
 for k=keep_count+1:numel(order)
     delete(fullfile(files(order(k)).folder,files(order(k)).name));
+end
+
+function delete_intermediate_run_files(run_dir,keep_files)
+% Remove files that can be regenerated from retained posterior chunks.
+if keep_files, return; end
+patterns = {'posterior_correlation_bands.mat','*.DS_Store'};
+for p=1:numel(patterns)
+    files=dir(fullfile(run_dir,'**',patterns{p}));
+    for k=1:numel(files)
+        if ~files(k).isdir, delete(fullfile(files(k).folder,files(k).name)); end
+    end
+end
+chain_dirs=dir(fullfile(run_dir,'chains','chain_*'));
+for c=1:numel(chain_dirs)
+    if ~chain_dirs(c).isdir, continue; end
+    folder=fullfile(chain_dirs(c).folder,chain_dirs(c).name);
+    for name={'diagnostics.mat','result.mat','pilot_summary.json','checkpoint.mat'}
+        path=fullfile(folder,name{1});
+        if isfile(path), delete(path); end
+    end
+end
 end
 end
 
