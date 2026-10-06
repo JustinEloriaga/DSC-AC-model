@@ -230,7 +230,7 @@ cfg.num_chains=4; cfg.convergence_mode='report'; cfg.parameter_smoothing='mean';
 run_dir=fullfile(cfg.output_root,'report_failed_estimation');
 result=dsc_run_inference(panel,priors,cfg,run_dir,inference);
 verifyTrue(testCase,isfile(result.paths.parameters));
-diagnostic=jsondecode(fileread(fullfile(run_dir,'estimation','convergence_diagnostics.json')));
+diagnostic=jsondecode(fileread(fullfile(run_dir,'estimation','convergence','convergence_diagnostics.json')));
 verifyEqual(testCase,diagnostic.status,'insufficient_draws'); verifyFalse(testCase,diagnostic.passed);
 verifyEqual(testCase,diagnostic.actual_draws_per_chain(:),[3;3;3;3]);
 verifyEqual(testCase,result.inference.estimation_convergence.status,'insufficient_draws');

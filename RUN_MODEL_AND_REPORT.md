@@ -279,7 +279,7 @@ The run directory contains:
 - `runs/<run-id>/run_manifest.json`: data hash, configuration, requested draw counts, MATLAB version, and code provenance for that run.
 - `checkpoint.mat` and `posterior_chunk_*.mat`: complete sampler/RNG state and retained draws for a single-chain stage. For multiple chains these live under `chains/chain_001/`, `chains/chain_002/`, and so on, each with its own summary/result.
 - `pilot_summary.json`: actual iterations, draws, timing, stop reason, and implementation details.
-- `convergence_diagnostics.json`, `.csv`, and `.mat`: overall status/thresholds/provenance and per-quantity R-hat, ESS, MCSE, availability, and pass/fail details. Parameter estimation has its own copies under `estimation/` when a separate estimation stage is used.
+- `convergence/convergence_diagnostics.json`: the overall status, thresholds, provenance, and per-quantity R-hat, ESS, MCSE, availability, and pass/fail details. Parameter estimation has its own copy under `estimation/convergence/` when a separate estimation stage is used.
 - `inference_metadata.json`: estimation/smoothing mode, loaded or saved parameter file, estimation timestamp, training cutoff, and smoothing end date.
 - `calibrated_priors.mat` and `prior_summary.json`: the selected run's own prior snapshot, used when rebuilding its report even after a different cutoff has been run.
 - `estimation/`: separate parameter-estimation stage whenever conditional smoothing follows, including the default posterior-mean mode.

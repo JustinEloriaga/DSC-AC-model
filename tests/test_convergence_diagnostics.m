@@ -100,14 +100,11 @@ verifyEqual(testCase,nnz(details.family=="h"),4);
 verifyEqual(testCase,nnz(details.date=="2020-01-03"),3);
 verifyEqual(testCase,nnz(details.date=="2020-01-10"),3);
 verifyTrue(testCase,all(details.passed));
-verifyTrue(testCase,isfile(fullfile(out,'convergence_diagnostics.json')));
-verifyTrue(testCase,isfile(fullfile(out,'convergence_diagnostics.csv')));
-saved=load(fullfile(out,'convergence_diagnostics.mat'),'report','details');
-verifyEqual(testCase,saved.report,report); verifyEqual(testCase,saved.details,details);
-decoded=jsondecode(fileread(fullfile(out,'convergence_diagnostics.json')));
+verifyTrue(testCase,isfile(fullfile(out,'convergence','convergence_diagnostics.json')));
+decoded=jsondecode(fileread(fullfile(out,'convergence','convergence_diagnostics.json')));
 verifyTrue(testCase,decoded.passed);
-% Temporary staging must be cleaned; only the requested reports remain.
-entries=dir(out); verifyEqual(testCase,nnz(~[entries.isdir]),3);
+% Temporary staging must be cleaned; only the JSON report remains.
+entries=dir(fullfile(out,'convergence')); verifyEqual(testCase,nnz(~[entries.isdir]),1);
 end
 
 function testChunkNumericOrderAndEarliestAlignment(testCase)

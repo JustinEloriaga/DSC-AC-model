@@ -1,14 +1,13 @@
 function paths = write_convergence_artifacts(run_dir,result)
-%WRITE_CONVERGENCE_ARTIFACTS Save chain-mean paths and a text diagnostic summary.
-% Means are averaged over P pairs or h variables at each modeled date, then
-% over retained draws within each chain. The convergence metrics are copied
-% from dsc_diagnose_chains rather than recomputed here.
+%WRITE_CONVERGENCE_ARTIFACTS Save entry-by-entry chain-mean paths and a text summary.
+% Each PDF page is one P pair or one h variable, with all chains over time.
+% P is a correlation and is displayed on [-1,1]. h is log standard deviation.
 outdir = fullfile(char(run_dir),'convergence');
 if ~isfolder(outdir), mkdir(outdir); end
 chain_dirs = result.chain_dirs;
 if ischar(chain_dirs) || isstring(chain_dirs), chain_dirs=cellstr(chain_dirs); end
 nChains = numel(chain_dirs);
-meanP=[]; meanH=[]; dates=[]; counts=zeros(1,nChains);
+meanP=[]; meanH=[]; dates=[]; counts=zeros(1,nChains); pair_i=[]; pair_j=[]; tickers=[];
 for c=1:nChains
     chunks=dir(fullfile(chain_dirs{c},'posterior_chunk_*.mat'));
     [~,order]=sort({chunks.name}); chunks=chunks(order);
@@ -16,31 +15,42 @@ for c=1:nChains
     for k=1:numel(chunks)
         loaded=load(fullfile(chunks(k).folder,chunks(k).name),'chunk');
         chunk=loaded.chunk;
-        if isempty(dates), dates=chunk.dates(:); end
+        if isempty(dates)
+            dates=chunk.dates(:); pair_i=chunk.pair_i; pair_j=chunk.pair_j; tickers=string(chunk.tickers);
+        end
         h=double(chunk.h); p=double(chunk.P_pairs);
         if isempty(sumP)
-            sumP=zeros(size(p,1),1); sumH=zeros(size(h,1),1);
+            sumP=zeros(size(p,1),size(p,2)); sumH=zeros(size(h,1),size(h,2));
         end
-        sumP=sumP+reshape(sum(sum(p,2),3),[],1);
-        sumH=sumH+reshape(sum(sum(h,2),3),[],1);
+        sumP=sumP+sum(p,3);
+        sumH=sumH+sum(h,3);
         counts(c)=counts(c)+size(p,3);
     end
     if counts(c)>0
-        meanP(:,c)=sumP/counts(c); %#ok<AGROW>
-        meanH(:,c)=sumH/counts(c); %#ok<AGROW>
+        meanP(:,:,c)=sumP/counts(c); %#ok<AGROW>
+        meanH(:,:,c)=sumH/counts(c); %#ok<AGROW>
     end
 end
 
 pdfPath=fullfile(outdir,'chain_mean_paths.pdf');
-fig=figure('Visible','off','Color','w','Position',[100 100 1200 850]);
-tiledlayout(2,1,'TileSpacing','compact','Padding','compact');
-nexttile; plot(dates,meanP,'LineWidth',1); grid on;
-ylabel('Mean P'); title('Mean correlation across P pairs by chain');
-legend(compose('Chain %d',1:nChains),'Location','eastoutside');
-nexttile; plot(dates,meanH,'LineWidth',1); grid on;
-ylabel('Mean h'); xlabel('Date'); title('Mean h across variables by chain');
-legend(compose('Chain %d',1:nChains),'Location','eastoutside');
-exportgraphics(fig,pdfPath,'ContentType','vector'); close(fig);
+if isfile(pdfPath), delete(pdfPath); end
+fig=figure('Visible','off','Color','w','Position',[50 50 1600 1100]);
+tiledlayout(fig,5,2,'TileSpacing','compact','Padding','compact');
+labels=erase(tickers," Index");
+for q=1:size(meanP,2)
+    nexttile; plot(dates,squeeze(meanP(:,q,:)),'LineWidth',0.8); grid on; ylim([-1 1]);
+    ylabel('P'); xlabel('t');
+    title(sprintf('Mean P: %s / %s',labels(pair_i(q)),labels(pair_j(q))));
+    if q==1, legend(compose('Chain %d',1:nChains),'Location','best'); end
+end
+for j=1:size(meanH,2)
+    nexttile; plot(dates,squeeze(meanH(:,j,:)),'LineWidth',0.8); grid on;
+    ylabel('h'); xlabel('t');
+    title(sprintf('Mean h: %s',labels(j)));
+end
+sgtitle('Chain means by entry: P correlations and h log standard deviations');
+exportgraphics(fig,pdfPath,'ContentType','vector');
+close(fig);
 
 txtPath=fullfile(outdir,'convergence_summary.txt');
 fid=fopen(txtPath,'w');

@@ -174,7 +174,7 @@ result.stage_seconds.elapsed=result.stage_elapsed_seconds;
 result.stage_seconds.diagnostics=diagnostic_seconds;
 result.paths.summary=fullfile(run_dir,'pilot_summary.json');
 result.paths.result=root_result;
-result.paths.convergence=fullfile(run_dir,'convergence_diagnostics.json');
+result.paths.convergence=fullfile(run_dir,'convergence','convergence_diagnostics.json');
 summary=rmfield(result,{'chain_results','priors','dates','tickers','pair_i','pair_j','convergence_details'});
 atomic_json(result.paths.summary,summary);
 atomic_save(root_result,'result',result);

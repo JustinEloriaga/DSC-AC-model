@@ -161,7 +161,7 @@ if options.BuildReport
     end
 end
 
-latest = struct('run_dir',run_dir,'summary',fullfile(run_dir,'pilot_summary.json'), ...
+latest = struct('run_dir',run_dir,'summary',fullfile(run_dir,'result.mat'), ...
     'figures',fullfile(run_dir,'figures'),'report_pdf',result.report_pdf, ...
     'requested_retained_draws',options.RetainedDraws, ...
     'requested_retained_draws_per_chain',options.RetainedDraws, ...
@@ -170,6 +170,7 @@ latest = struct('run_dir',run_dir,'summary',fullfile(run_dir,'pilot_summary.json
     'warmup_iterations',cfg.burnin,'thin',cfg.thin,'completed_iterations',result.completed_iterations, ...
     'status',result.status,'created_at',char(datetime('now','Format','yyyy-MM-dd''T''HH:mm:ss')));
 latest.inference=result.inference;
+latest.convergence_artifacts=result.convergence_artifacts;
 latest.manifest=run_manifest;
 latest.num_chains=cfg.num_chains;
 latest.actual_retained_draws_per_chain=result.saved_draws_per_chain;
@@ -198,6 +199,7 @@ if numel(files) <= keep_count, return; end
 for k=keep_count+1:numel(order)
     delete(fullfile(files(order(k)).folder,files(order(k)).name));
 end
+end
 
 function delete_intermediate_run_files(run_dir,keep_files)
 % Remove files that can be regenerated from retained posterior chunks.
@@ -205,6 +207,14 @@ if keep_files, return; end
 patterns = {'posterior_correlation_bands.mat','*.DS_Store'};
 for p=1:numel(patterns)
     files=dir(fullfile(run_dir,'**',patterns{p}));
+    for k=1:numel(files)
+        if ~files(k).isdir, delete(fullfile(files(k).folder,files(k).name)); end
+    end
+end
+% These JSON files are runtime handoffs and are reproducible from the
+% retained chunks, result, manifest, and convergence diagnostics.
+for name={'pilot_summary.json','inference_metadata.json','prior_summary.json'}
+    files=dir(fullfile(run_dir,'**',name{1}));
     for k=1:numel(files)
         if ~files(k).isdir, delete(fullfile(files(k).folder,files(k).name)); end
     end
@@ -217,7 +227,6 @@ for c=1:numel(chain_dirs)
         path=fullfile(folder,name{1});
         if isfile(path), delete(path); end
     end
-end
 end
 end
 

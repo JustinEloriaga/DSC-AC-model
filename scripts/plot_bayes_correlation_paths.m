@@ -113,7 +113,7 @@ elseif established&&(~isfield(summary,'inference_mode')|| ...
 end
 dsc_validate_convergence(report,ids,counts,expected);
 if established
-    path=fullfile(run_dir,'convergence_diagnostics.json');
+    path=fullfile(run_dir,'convergence','convergence_diagnostics.json');
     if ~isfile(path)||~isequaln(report,jsondecode(fileread(path)))
         error('DSC:ConvergenceMetadata','Passing run-summary diagnostics disagree with the saved diagnostic JSON.');
     end

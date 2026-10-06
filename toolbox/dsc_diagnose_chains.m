@@ -26,6 +26,8 @@ if nargin<3||isempty(output_dir)
 end
 cfg=diagnostic_config(cfg);
 if ~isfolder(output_dir), mkdir(output_dir); end
+convergence_dir=fullfile(output_dir,'convergence');
+if ~isfolder(convergence_dir), mkdir(convergence_dir); end
 thresholds=struct('rhat_threshold',cfg.rhat_threshold,'min_ess',cfg.min_ess, ...
     'max_mcse_ratio',cfg.max_mcse_ratio,'min_diagnostic_draws',cfg.min_diagnostic_draws, ...
     'min_original_chains',4,'rhat',cfg.rhat_threshold,'ess',cfg.min_ess, ...
@@ -43,9 +45,7 @@ report=struct('status','not_checked','reason','','passed',false,'chains',numel(c
     'alignment','Earliest common retained draw count; no additional burn-in removal.', ...
     'method','Rank-normalized split/folded Rhat; Geyer positive/monotone bulk/tail ESS; raw-mean MCSE.', ...
     'mode',cfg.convergence_mode);
-report.paths=struct('json',fullfile(output_dir,'convergence_diagnostics.json'), ...
-    'csv',fullfile(output_dir,'convergence_diagnostics.csv'), ...
-    'mat',fullfile(output_dir,'convergence_diagnostics.mat'));
+report.paths=struct('json',fullfile(convergence_dir,'convergence_diagnostics.json'));
 details=empty_details();
 if strcmp(cfg.convergence_mode,'off')
     % Counts are unknown because off intentionally does not inspect chunks.
@@ -381,10 +381,6 @@ if strcmp(which,'max'), value=max(values); else, value=min(values); end
 end
 
 function write_outputs(report,details)
-temporary=[tempname(fileparts(report.paths.mat)) '.mat'];
-save(temporary,'report','details','-v7.3'); movefile(temporary,report.paths.mat,'f');
-temporary=[tempname(fileparts(report.paths.csv)) '.csv'];
-writetable(details,temporary); movefile(temporary,report.paths.csv,'f');
 temporary=[tempname(fileparts(report.paths.json)) '.json'];
 fid=fopen(temporary,'w');
 if fid<0, error('dsc:DiagnosticOutput','Cannot write diagnostic JSON.'); end

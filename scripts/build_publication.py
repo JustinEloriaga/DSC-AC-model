@@ -578,7 +578,7 @@ def saved_convergence_text(run, sampler, inference):
         if sampler.get("convergence_established", False):
             raise ValueError("Passing convergence flag has no supporting diagnostic report")
         return ""
-    diagnostic_path = run / "convergence_diagnostics.json"
+    diagnostic_path = run / "convergence" / "convergence_diagnostics.json"
     if not diagnostic_path.is_file() or json.loads(diagnostic_path.read_text()) != report:
         raise ValueError("Saved convergence diagnostics disagree with sampler summary")
     validate_diagnostic_summary(report)
@@ -747,7 +747,7 @@ def sampler_iteration_seconds(pilot, n):
 def convergence_diagnostic_text(run, pilot):
     """Summarize the saved convergence diagnostic for the diagnostics section."""
     report = None
-    diagnostic_path = run / "convergence_diagnostics.json"
+    diagnostic_path = run / "convergence" / "convergence_diagnostics.json"
     if diagnostic_path.is_file():
         report = json.loads(diagnostic_path.read_text())
     elif isinstance(pilot.get("convergence"), dict):
