@@ -231,6 +231,12 @@ Both kernels are already built on this device. Rebuild them with
 reduced 100 retained draws from 252.8 to 33.1 seconds; see
 [the performance report](research/sampler_performance_100_draws.md).
 
+Convergence reporting checks the derived correlation paths `P_pairs` and
+log-volatility paths `h` at every modeled date. The latent correlation
+coordinates `r`, transition paths `B`, and estimated hyperparameters `V`,
+`sig2h`, and `sig2r` remain available where saved but are excluded from the
+convergence pass/fail decision.
+
 ## File Map
 
 ### Root MATLAB Files

@@ -171,7 +171,7 @@ Each process holds its own model state. `CorrelationThreads` is the number of na
 
 ### What is checked
 
-The code records rank-normalized split/folded R-hat, bulk and tail effective sample sizes (ESS), and Monte Carlo standard error (MCSE) of each mean. The default passing criteria are:
+The code records rank-normalized split/folded R-hat, bulk and tail effective sample sizes (ESS), and Monte Carlo standard error (MCSE) for the derived correlation paths `P_pairs` and log-volatility paths `h`. The latent correlation coordinates `r`, transition paths `B`, and hyperparameters `V`, `sig2h`, and `sig2r` are excluded from the convergence verdict. The default passing criteria are:
 
 - At least four original chains and at least 100 retained draws in every chain.
 - R-hat strictly below `1.01` for every checked quantity.
@@ -179,7 +179,7 @@ The code records rank-normalized split/folded R-hat, bulk and tail effective sam
 - Mean MCSE divided by the sample standard deviation at most `0.05`.
 - Equal retained counts across chains, with no unavailable or failing diagnostics.
 
-During estimation, checks cover every unique entry of `V`, every `sig2h` and `sig2r`, and the mean states, log-variance states, and all actual pairwise correlations at **every modeled week**. During posterior-mean-parameter smoothing, checks cover the state paths; the fixed parameters are not tested as if they were random draws. Diagnostics follow the [Stan posterior definitions](https://mc-stan.org/posterior/reference/diagnostics.html) and [rank-normalized diagnostic methodology](https://doi.org/10.1214/20-BA1221).
+During estimation and smoothing, checks cover `P(i,j,t)` and `h(j,t)` at **every modeled week**. The transition paths, hyperparameters, and latent `r` are not part of the convergence verdict. Diagnostics follow the [Stan posterior definitions](https://mc-stan.org/posterior/reference/diagnostics.html) and [rank-normalized diagnostic methodology](https://doi.org/10.1214/20-BA1221).
 
 These are diagnostic criteria, not a mathematical guarantee that the posterior has been explored. Inspect chain behavior and the quantities relevant to your application as well. Numerical validity of the correlation matrices is a separate issue. With unequal lengths, diagnostics use the earliest common retained length for exploratory comparison, but the run cannot pass because pooled summaries also use the extra draws.
 

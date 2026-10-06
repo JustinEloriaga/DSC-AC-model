@@ -94,11 +94,11 @@ verifyEqual(testCase,report.actual_draws_per_chain,[1600 1600 1600 1600]);
 verifyEqual(testCase,report.draws_per_chain,1600);
 verifyEqual(testCase,report.chain_ids,[11 12 13 14]);
 verifyEqual(testCase,report.retained_iteration_ranges,repmat([102 3300],4,1));
-verifyEqual(testCase,report.quantities_checked,16); verifyEqual(testCase,height(details),16);
-verifyEqual(testCase,nnz(details.family=="V"),3); % includes the off-diagonal
+verifyEqual(testCase,report.quantities_checked,6); verifyEqual(testCase,height(details),6);
 verifyEqual(testCase,nnz(details.family=="P_pairs"),2);
-verifyEqual(testCase,nnz(details.date=="2020-01-03"),5);
-verifyEqual(testCase,nnz(details.date=="2020-01-10"),5);
+verifyEqual(testCase,nnz(details.family=="h"),4);
+verifyEqual(testCase,nnz(details.date=="2020-01-03"),3);
+verifyEqual(testCase,nnz(details.date=="2020-01-10"),3);
 verifyTrue(testCase,all(details.passed));
 verifyTrue(testCase,isfile(fullfile(out,'convergence_diagnostics.json')));
 verifyTrue(testCase,isfile(fullfile(out,'convergence_diagnostics.csv')));
@@ -122,9 +122,9 @@ x=zeros(800,4);
 for c=1:4
     a=load(fullfile(dirs{c},'posterior_chunk_2.mat'),'chunk');
     b=load(fullfile(dirs{c},'posterior_chunk_10.mat'),'chunk');
-    values=[a.chunk.sig2h;b.chunk.sig2h]; x(:,c)=values(1:800,1);
+    values=[squeeze(a.chunk.P_pairs(1,1,:)); squeeze(b.chunk.P_pairs(1,1,:))]; x(:,c)=values(1:800);
 end
-expected=dsc_mcmc_diagnostics(x); row=find(details.quantity=="sig2h(1)");
+expected=dsc_mcmc_diagnostics(x); row=find(details.quantity=="P(2,1)[2020-01-03]");
 verifyEqual(testCase,details.rhat(row),expected.rhat,'AbsTol',1e-12);
 verifyEqual(testCase,details.ess_bulk(row),expected.ess_bulk,'RelTol',1e-12);
 end
@@ -132,7 +132,8 @@ end
 function testFixedConstantsAreExcludedButAllStateDatesChecked(testCase)
 [dirs,cfg,out]=fixture(testCase,4,1400,false,'-v7');
 [report,details]=dsc_diagnose_chains(dirs,cfg,out);
-verifyTrue(testCase,report.passed); verifyEqual(testCase,height(details),10);
+verifyTrue(testCase,report.passed); verifyEqual(testCase,height(details),6);
+verifyFalse(testCase,any(ismember(details.family,["V","sig2h","sig2r","B","r"])));
 verifyFalse(testCase,any(ismember(details.family,["V","sig2h","sig2r"])));
 % Corrupt only the final date of P to ensure every state date is checked.
 for c=1:4
@@ -148,17 +149,17 @@ verifyTrue(testCase,ismember('P(2,1)[2020-01-10]',report.unavailable_quantities)
 verifyFalse(testCase,details.available(details.quantity=="P(2,1)[2020-01-10]"));
 end
 
-function testOffDiagonalCovarianceMustPass(testCase)
+function testCorrelationPathMustPass(testCase)
 [dirs,cfg,out]=fixture(testCase,4,900,true,'-v7');
 files=dir(fullfile(dirs{4},'posterior_chunk_*.mat'));
 for k=1:numel(files)
     file=fullfile(files(k).folder,files(k).name); s=load(file,'chunk'); chunk=s.chunk;
-    chunk.V(2,1,:)=chunk.V(2,1,:)+.5; chunk.V(1,2,:)=chunk.V(2,1,:);
+    chunk.P_pairs(1,1,:)=chunk.P_pairs(1,1,:)+.5;
     save(file,'chunk','-v7');
 end
 [report,details]=dsc_diagnose_chains(dirs,cfg,out);
-verifyFalse(testCase,report.passed); verifyTrue(testCase,ismember('V(2,1)',report.failing_quantities));
-verifyGreaterThan(testCase,details.rhat(details.quantity=="V(2,1)"),1.1);
+verifyFalse(testCase,report.passed); verifyTrue(testCase,ismember('P(2,1)[2020-01-03]',report.failing_quantities));
+verifyGreaterThan(testCase,details.rhat(details.quantity=="P(2,1)[2020-01-03]"),1.1);
 end
 
 function testOneChainAndShortDrawsCannotPass(testCase)

@@ -2,8 +2,9 @@ function [report,details] = dsc_diagnose_chains(chain_dirs,cfg,output_dir)
 %DSC_DIAGNOSE_CHAINS Diagnose retained chunks, preserving original chains.
 % No burn-in is removed here: posterior_chunk files already contain only
 % retained draws. Unequal chains use their earliest common retained length.
-% Every unique V element, sig2h and sig2r is checked during estimation;
-% B, h and actual P_pairs are checked at EVERY modeled date in both modes.
+% Actual P_pairs and h state paths are checked at EVERY modeled date.
+% The latent r coordinates, B states and hyperparameters remain available
+% in saved chunks but are excluded from the convergence verdict.
 % A pass requires at least four original chains, enough retained draws,
 % and finite passing diagnostics for every checked scalar quantity.
 %
@@ -29,11 +30,7 @@ thresholds=struct('rhat_threshold',cfg.rhat_threshold,'min_ess',cfg.min_ess, ...
     'max_mcse_ratio',cfg.max_mcse_ratio,'min_diagnostic_draws',cfg.min_diagnostic_draws, ...
     'min_original_chains',4,'rhat',cfg.rhat_threshold,'ess',cfg.min_ess, ...
     'mcse_ratio',cfg.max_mcse_ratio,'min_draws',cfg.min_diagnostic_draws);
-if cfg.estimate_parameters
-    scope='All unique V entries, sig2h, sig2r, and B/h/P_pairs at every modeled date.';
-else
-    scope='Conditional state smoothing: B/h/P_pairs at every modeled date; fixed parameters excluded.';
-end
+scope='P_pairs and h state paths at every modeled date; r, B and hyperparameters excluded.';
 report=struct('status','not_checked','reason','','passed',false,'chains',numel(chain_dirs), ...
     'draws_per_chain',0,'actual_draws_per_chain',zeros(1,numel(chain_dirs)), ...
     'quantities_checked',0,'max_rhat',NaN,'min_ess_bulk',NaN,'min_ess_tail',NaN, ...
@@ -82,7 +79,7 @@ for c=1:numel(chain_dirs)
     elseif ~isequaln(current,target)
         error('dsc:DiagnosticIdentity','Original chains must have the same data, priors, fixed parameters and configuration.');
     end
-    stage=matfile(fullfile(stage_dir,sprintf('chain_%d.mat',c)),'Writable',true);
+    stage=[];
     count=0; previous=provenance.burnin; chain_id=provenance.chain_id;
     for k=1:numel(chunks)
         check_budget();
@@ -100,6 +97,11 @@ for c=1:numel(chain_dirs)
             error('dsc:DiagnosticIdentity','Dates, tickers, pair order or state dimensions differ in %s.',chunks{k});
         end
         if k==1
+            stage=matfile(fullfile(stage_dir,sprintf('chain_%d.mat',c)),'Writable',true);
+            stage.h=zeros(provenance.saved,meta.T*meta.m);
+            stage.P_pairs=zeros(provenance.saved,meta.T*meta.nr);
+        end
+        if k==1
             report.retained_iteration_ranges(c,1)=chunk.iterations(1);
         end
         iterations=double(chunk.iterations(:));
@@ -113,18 +115,14 @@ for c=1:numel(chain_dirs)
             'bytes',file_info.bytes,'modified_datenum',file_info.datenum);
         if k==1, report.chunk_metadata{c}=record; else, report.chunk_metadata{c}(k)=record; end
         % The source is already retained, regardless of cfg.burnin/cfg.thin.
-        for family={'B','h','P_pairs'}
+        for family={'h','P_pairs'}
             check_budget();
             name=family{1}; values=chunk.(name);
-            stage.(name)(rows,1:numel(values(:,:,1)))=reshape(values,[],number)';
-        end
-        if cfg.estimate_parameters
-            check_budget();
-            values=reshape(chunk.V,meta.m^2,number);
-            lower=find(tril(true(meta.m)));
-            stage.V(rows,1:numel(lower))=values(lower,:)';
-            stage.sig2h(rows,1:meta.m)=chunk.sig2h;
-            stage.sig2r(rows,1:meta.nr)=chunk.sig2r;
+            if strcmp(name,'h')
+                stage.h(rows,:)=reshape(values,[],number)';
+            else
+                stage.P_pairs(rows,:)=reshape(values,[],number)';
+            end
         end
         count=count+number;
     end
@@ -151,7 +149,7 @@ if aligned==0
     report.reason='At least one original chain has no saved retained draws.';
     write_outputs(report,details); return
 end
-details=quantity_details(identity,cfg.estimate_parameters);
+details=quantity_details(identity);
 metrics=nan(height(details),5); available=false(height(details),1);
 passed=false(height(details),1); reasons=strings(height(details),1);
 % Limit the draw cube to approximately 32 MiB (and at most 64 scalars).
@@ -165,7 +163,12 @@ for f=1:numel(families)
         draws=zeros(aligned,numel(chain_dirs),numel(block));
         for c=1:numel(chain_dirs)
             check_budget();
-            draws(:,c,:)=reshape(staged{c}.(family)(1:aligned,block),aligned,1,numel(block));
+            if strcmp(family,'h')
+                values=staged{c}.h(1:aligned,block);
+            else
+                values=staged{c}.P_pairs(1:aligned,block);
+            end
+            draws(:,c,:)=reshape(values,aligned,1,numel(block));
         end
         for b=1:numel(block)
             check_budget();
@@ -346,24 +349,13 @@ details=table('Size',[0 13],'VariableTypes', ...
     'mcse_mean','mcse_sd_ratio','available','passed','reason'});
 end
 
-function details=quantity_details(meta,estimate)
-count=meta.T*(2*meta.m+meta.nr);
-if estimate, count=count+meta.m*(meta.m+1)/2+meta.m+meta.nr; end
+function details=quantity_details(meta)
+count=meta.T*(meta.m+meta.nr);
 quantity=strings(count,1); family=strings(count,1); date=strings(count,1);
 index_i=nan(count,1); index_j=nan(count,1);
 row=0;
-if estimate
-    [vi,vj]=find(tril(true(meta.m)));
-    ix=row+(1:numel(vi)); quantity(ix)=compose('V(%d,%d)',vi,vj);
-    family(ix)="V"; index_i(ix)=vi; index_j(ix)=vj; row=row+numel(vi);
-    for name={'sig2h','sig2r'}
-        field=name{1}; width=meta.m; if strcmp(field,'sig2r'), width=meta.nr; end
-        ix=row+(1:width); quantity(ix)=compose([field '(%d)'],(1:width)');
-        family(ix)=string(field); index_i(ix)=(1:width)'; row=row+width;
-    end
-end
 date_labels=string(meta.dates,'yyyy-MM-dd');
-for name={'B','h','P_pairs'}
+for name={'h','P_pairs'}
     field=name{1}; width=meta.m; if strcmp(field,'P_pairs'), width=meta.nr; end
     for k=1:width
         ix=row+(1:meta.T); family(ix)=string(field); date(ix)=date_labels;

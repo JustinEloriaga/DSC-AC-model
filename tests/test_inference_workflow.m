@@ -217,8 +217,8 @@ verifyEqual(testCase,first.inference.estimation_convergence.status,'insufficient
 verifyEqual(testCase,first.inference.state_convergence.status,'insufficient_draws');
 verifyEqual(testCase,first.inference.estimation_convergence.draws_per_chain,3);
 verifyEqual(testCase,first.inference.state_convergence.draws_per_chain,3);
-verifyEqual(testCase,first.inference.estimation_convergence.quantities_checked,84);
-verifyEqual(testCase,first.inference.state_convergence.quantities_checked,144);
+verifyEqual(testCase,first.inference.estimation_convergence.quantities_checked,48);
+verifyEqual(testCase,first.inference.state_convergence.quantities_checked,96);
 verifyFalse(testCase,first.inference.estimation_convergence.passed);
 verifyFalse(testCase,first.inference.state_convergence.passed);
 verifyFalse(testCase,first.inference.parameter_uncertainty_in_bands);
