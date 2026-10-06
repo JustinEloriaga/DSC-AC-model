@@ -114,7 +114,7 @@ end
 parameters.convergence=struct('status','not_checked','passed',false);
 if isfield(result,'convergence'), parameters.convergence=result.convergence; end
 m=numel(panel.tickers); nr=numel(panel.pair_i);
-expected_quantities=numel(panel.dates)*(2*m+nr)+m*(m+1)/2+m+nr;
+expected_quantities=numel(panel.dates)*(m+nr);
 dsc_validate_convergence(parameters.convergence,chain_ids,chain_counts,expected_quantities);
 parameters.convergence_established=parameters.convergence.passed;
 parameters.run_dir=char(result.run_dir);

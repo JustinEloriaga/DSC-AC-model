@@ -5,7 +5,7 @@ tests=functiontests(localfunctions);
 end
 
 function testProcessChainsMatchSequentialDraws(testCase)
-root=fileparts(fileparts(fileparts(mfilename('fullpath'))));
+root=fileparts(fileparts(mfilename('fullpath')));
 addpath(root,fullfile(root,'toolbox'));
 assumeTrue(testCase,dsc_parallel_available(),'Parallel Computing Toolbox is required for this opt-in test.');
 folder=tempname; mkdir(folder);

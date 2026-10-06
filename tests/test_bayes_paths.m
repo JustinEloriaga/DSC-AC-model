@@ -31,16 +31,17 @@ testCase.TestData.folder=folder; testCase.TestData.metadata=metadata;
 testCase.TestData.summary=summary;
 end
 
-function testDiagnosticJsonCopiedWithoutNullOrArrayChanges(testCase)
+function testDiagnosticMetadataPreservedWithoutExtraJson(testCase)
 folder=testCase.TestData.folder; metadata=testCase.TestData.metadata;
 metadata.estimation_convergence=struct('status','not_checked','passed',false, ...
     'max_rhat',NaN,'chunk_metadata',{{struct('file','one_chunk.mat')}});
 write_fixture(fullfile(folder,'inference_metadata.json'),metadata);
 write_fixture(fullfile(folder,'run_manifest.json'),struct('source_hash','fixture','inference',metadata));
 plot_bayes_correlation_paths(folder);
-raw=fileread(fullfile(folder,'inference_metadata.json'));
-copy=fileread(fullfile(folder,'figures','bayes_correlation_paths_manifest.json'));
-verifyTrue(testCase,contains(copy,raw));
+original=jsondecode(fileread(fullfile(folder,'inference_metadata.json')));
+bands=load(fullfile(folder,'posterior_correlation_bands.mat'),'inference');
+verifyEqual(testCase,bands.inference,original);
+verifyFalse(testCase,isfile(fullfile(folder,'figures','bayes_correlation_paths_manifest.json')));
 end
 
 function testConditionalPathsRecordSavedProvenance(testCase)
@@ -54,14 +55,12 @@ write_fixture(fullfile(testCase.TestData.folder,'inference_metadata.json'),metad
 write_fixture(fullfile(testCase.TestData.folder,'run_manifest.json'), ...
     struct('source_hash','fixture','inference',metadata));
 paths=plot_bayes_correlation_paths(testCase.TestData.folder);
-verifyEqual(testCase,numel(paths),2);
+verifyEqual(testCase,numel(paths),1);
 verifyTrue(testCase,all(isfile(paths)));
-manifest=jsondecode(fileread(fullfile(testCase.TestData.folder,'figures','bayes_correlation_paths_manifest.json')));
-verifyEqual(testCase,manifest.inference,metadata);
-verifyEqual(testCase,manifest.first_date,'2020-01-03');
-verifyEqual(testCase,manifest.last_date,'2020-04-17');
-bands=load(fullfile(testCase.TestData.folder,'posterior_correlation_bands.mat'),'inference');
+bands=load(fullfile(testCase.TestData.folder,'posterior_correlation_bands.mat'));
 verifyEqual(testCase,bands.inference,metadata);
+verifyEqual(testCase,char(string(bands.dates(1),'yyyy-MM-dd')),'2020-01-03');
+verifyEqual(testCase,char(string(bands.dates(end),'yyyy-MM-dd')),'2020-04-17');
 % Optional local visual QA preserves a copy before fixture teardown.
 qa_dir=getenv('DSC_TEST_PDF_QA_DIR');
 if ~isempty(qa_dir)
@@ -97,8 +96,8 @@ summary=rmfield(testCase.TestData.summary,'inference_mode');
 write_fixture(fullfile(testCase.TestData.folder,'pilot_summary.json'),summary);
 paths=plot_bayes_correlation_paths(testCase.TestData.folder);
 verifyTrue(testCase,all(isfile(paths)));
-manifest=jsondecode(fileread(fullfile(testCase.TestData.folder,'figures','bayes_correlation_paths_manifest.json')));
-verifyFalse(testCase,isfield(manifest,'inference'));
+bands=load(fullfile(testCase.TestData.folder,'posterior_correlation_bands.mat'),'inference');
+verifyEmpty(testCase,bands.inference);
 end
 
 function testMultipleChainsPoolBandsAndPreserveDrawProvenance(testCase)
@@ -116,14 +115,7 @@ verifyEqual(testCase,bands.draw_chain_ids,[3 3 3 7 7]);
 verifyEqual(testCase,bands.iterations,[2 3 4 2 3]);
 verifyEqual(testCase,bands.retained_draws_per_chain,[3 2]);
 verifyEqual(testCase,bands.warmup_per_chain,[1 1]);
-manifest=jsondecode(fileread(fullfile(testCase.TestData.folder,'figures','bayes_correlation_paths_manifest.json')));
-verifyEqual(testCase,manifest.retained_draws,5);
-verifyEqual(testCase,manifest.chain_ids(:),[3;7]);
-verifyEqual(testCase,manifest.retained_draws_per_chain(:),[3;2]);
-verifyEqual(testCase,manifest.draw_chain_ids(:),[3;3;3;7;7]);
-verifyEqual(testCase,manifest.retained_iterations(:),[2;3;4;2;3]);
-verifyEqual(testCase,manifest.warmup_removed_per_chain(:),[1;1]);
-verifyTrue(testCase,contains(manifest.note,'warm-up iterations per chain'));
+verifyFalse(testCase,isfile(fullfile(testCase.TestData.folder,'figures','bayes_correlation_paths_manifest.json')));
 end
 
 function testDuplicateChainDirectoriesRejectBeforeExport(testCase)

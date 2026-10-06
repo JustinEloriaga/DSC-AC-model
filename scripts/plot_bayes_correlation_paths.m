@@ -65,7 +65,7 @@ figure_paths = strings(pages,1);
 for page = 1:pages
     ix = (page-1)*9 + (1:9);
     ix = ix(ix<=numel(pair_labels));
-    figure_paths(page+1) = plot_page(fullfile(fig_dir,sprintf('bayes_correlation_paths_all_%02d.pdf',page)), ...
+    figure_paths(page) = plot_page(fullfile(fig_dir,sprintf('bayes_correlation_paths_all_%02d.pdf',page)), ...
         dates, median_path, lower, upper, pair_labels, ix, ...
         sprintf('All Bayesian correlation paths, page %d of %d',page,pages),inference,convergence_established,draw_note,false);
 end
@@ -83,11 +83,9 @@ if ~isstruct(report)||~isscalar(report)||~isfield(report,'passed')|| ...
         ~isequal(established,report.passed)
     error('DSC:ConvergenceMetadata','The plot convergence flag disagrees with its diagnostic report.');
 end
-nr=m*(m-1)/2; expected=T*(2*m+nr);
-if isfield(summary,'inference_mode')&&strcmp(summary.inference_mode,'parameter_estimation')
-    expected=expected+m*(m+1)/2+m+nr;
-elseif established&&(~isfield(summary,'inference_mode')|| ...
-        ~strcmp(summary.inference_mode,'fixed_parameter_smoothing'))
+nr=m*(m-1)/2; expected=T*(m+nr);
+if established&&(~isfield(summary,'inference_mode')|| ...
+        ~ismember(summary.inference_mode,{'parameter_estimation','fixed_parameter_smoothing'}))
     error('DSC:ConvergenceMetadata','A passing diagnostic report must identify its inference target.');
 end
 dsc_validate_convergence(report,ids,counts,expected);

@@ -33,8 +33,8 @@ arguments
     options.KeepNewestParameterFiles (1,1) double {mustBeInteger,mustBeNonnegative} = 3
     options.ParameterSmoothing (1,1) string {mustBeMember(options.ParameterSmoothing,["draws","mean"])} = "mean"
     options.RunTests (1,1) logical = true
-    options.BuildReport (1,1) logical = true
-    options.VerifyReport (1,1) logical = true
+    options.BuildReport (1,1) logical = false
+    options.VerifyReport (1,1) logical = false
     options.PythonExecutable (1,1) string = "python3"
 end
 

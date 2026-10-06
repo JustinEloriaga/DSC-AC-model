@@ -24,14 +24,14 @@
 \vspace{25mm}
 {\color{navy}\Huge\bfseries Weekly correlations\par}
 \vspace{5mm}
-{\Large Fourteen market variables, 2003--2026\par}
+{\Large \NumVariables{} market variables, \FirstReturn{}--\LastReturn{}\par}
 \vspace{10mm}
 {\large Data validation, rolling estimates, and a Bayesian sampler run\par}
 \vspace{18mm}
 \begin{tabular}{@{}ll@{}}\toprule
 Return sample & \FirstReturn{} to \LastReturn{}\\
 Weekly observations & \NumReturns{}\\
-Series / distinct pairs & 14 / 91\\
+Series / distinct pairs & \NumVariables{} / \NumPairs{}\\
 Currency basis & Native quotes as supplied\\
 Estimator status & Descriptive results plus a saved sampler run\\\bottomrule
 \end{tabular}
@@ -62,7 +62,7 @@ All analyses below use percentage weekly log returns. Standard deviations are we
 \begin{figure}[htbp]\centering\includegraphics[width=.84\linewidth]{generated/figures/full_correlation.pdf}\caption{Full-sample Pearson correlations, \FirstReturn{}--\LastReturn{}. The baseline retains flagged as-of marks around the closure. \figsource}\end{figure}
 \section{Stationarity of weekly returns}
 \label{sec:stationarity}
-We test the 14 weekly return series $y_{jt}=100\Delta\log L_{jt}$. Table~\ref{tab:return-stationarity} reports augmented Dickey--Fuller (ADF) tests with a constant and BIC-selected lags from 0--13 \citep{mathworksadf}.
+We test the \NumVariables{} weekly return series $y_{jt}=100\Delta\log L_{jt}$. Table~\ref{tab:return-stationarity} reports augmented Dickey--Fuller (ADF) tests with a constant and BIC-selected lags from 0--13 \citep{mathworksadf}.
 \input{generated/return_adf_conclusion.tex}
 \par
 \begin{table}[htbp]
@@ -78,7 +78,7 @@ Null: a unit root. Lag selection uses a common 1,190-observation regression samp
 \section{Joint Bayesian correlation model}
 The goal of the Bayesian model is to estimate a time series of correlations after accounting for each market's own mean and volatility. In each week, the model separates the return vector into three moving parts: expected returns, individual risk levels, and the correlation matrix linking the return innovations. The object of interest is the sequence of correlation matrices $P_t$, not the raw return correlations and not the sampler's internal coordinates.
 \subsection{Observation and state equations}
-The repository implements the dynamic stochastic-correlation approach associated with \citet{arias2023}. For $m=14$ and $q=m(m-1)/2=91$, retain its time-varying intercept specification, with no VAR lags ($p=0$):
+The repository implements the dynamic stochastic-correlation approach associated with \citet{arias2023}. For $m=\NumVariables{}$ and $q=m(m-1)/2=\NumPairs{}$, retain its time-varying intercept specification, with no VAR lags ($p=0$):
 \begin{align}
 y_t &= B_t+\varepsilon_t,& \varepsilon_t&\sim\Normal(0,H_t),\\
 H_t &= D_tP_tD_t,&D_t&=\diag\{\exp(h_{1t}/2),\ldots,\exp(h_{mt}/2)\},\\
@@ -86,9 +86,9 @@ B_t&=B_{t-1}+\eta_t,\quad t\geq2,&\eta_t&\sim\Normal(0,V),\\
 h_{jt}&=h_{j,t-1}+u_{jt},&u_{jt}&\sim\Normal(0,\sigma_{h,j}^2),\\
 r_{kt}&=r_{k,t-1}+v_{kt},&v_{kt}&\sim\Normal(0,\sigma_{r,k}^2).
 \end{align}
-The unrestricted vector $r_t=\vect(\log P_t)$ is the lower off-diagonal part of the matrix logarithm of the correlation matrix. Reconstruction follows \citet{archakov2021}. These coordinates are not correlations. Numerical outputs therefore store actual distinct entries of $P_t$, alongside the latent states needed for checkpointing. There are 119 time-varying scalar states per week: 14 means, 14 log variances, and 91 correlation coordinates.
+The unrestricted vector $r_t=\vect(\log P_t)$ is the lower off-diagonal part of the matrix logarithm of the correlation matrix. Reconstruction follows \citet{archakov2021}. These coordinates are not correlations. Numerical outputs therefore store actual distinct entries of $P_t$, alongside the other latent states. There are \NumStates{} time-varying scalar states per week: \NumVariables{} means, \NumVariables{} log variances, and \NumPairs{} correlation coordinates.
 
-In the baseline dataset used here, all 14 return series are present for every one of the \NumReturns{} weeks, so the model uses the full 14-dimensional return vector each week:
+In the baseline dataset used here, all \NumVariables{} return series are present for every one of the \NumReturns{} weeks, so the model uses the full \NumVariables{}-dimensional return vector each week:
 \begin{equation}
 y_t\mid B_t,h_t,r_t\sim\Normal\left(B_t,H_t\right).
 \end{equation}
@@ -104,9 +104,9 @@ B_1 &\sim \Normal(\bar B,4\bar V_B),
 & r_{k0}\mid\sigma_{r,k}^2 &\sim\Normal(\bar r_k,10\sigma_{r,k}^2),
 \quad k=1,\ldots,q.
 \end{align}
-Here $m=14$, $q=91$, and $h_{j0},r_{k0}$ are pre-sample states. Prior blocks are independent; initial volatility and correlation states are conditionally independent given their innovation variances. Hyperparameter definitions and empirical-Bayes calibration are recorded in the saved run artifacts.
+Here $m=\NumVariables{}$, $q=\NumPairs{}$, and $h_{j0},r_{k0}$ are pre-sample states. Prior blocks are independent; initial volatility and correlation states are conditionally independent given their innovation variances. Hyperparameter definitions and empirical-Bayes calibration are recorded in the saved run artifacts.
 \section{Sampler run}
-This section records the saved sampler run used for the current report. The run stopped at the configured time cap, so convergence is reported from the saved diagnostics rather than inferred from completion.
+This section records the saved sampler run used for the current report. Run status and convergence are reported from the saved diagnostics.
 \input{generated/pilot.tex}
 \clearpage
 \section{Run diagnostics}

@@ -1,6 +1,6 @@
 function paths = write_convergence_artifacts(run_dir,result)
 %WRITE_CONVERGENCE_ARTIFACTS Save entry-by-entry chain-mean paths and a text summary.
-% Each PDF page is one P pair or one h variable, with all chains over time.
+% Each panel is one P pair or one h variable, with all chains over time.
 % P is a correlation and is displayed on [-1,1]. h is log standard deviation.
 outdir = fullfile(char(run_dir),'convergence');
 if ~isfolder(outdir), mkdir(outdir); end
@@ -34,23 +34,31 @@ end
 
 pdfPath=fullfile(outdir,'chain_mean_paths.pdf');
 if isfile(pdfPath), delete(pdfPath); end
-fig=figure('Visible','off','Color','w','Position',[50 50 1600 1100]);
-tiledlayout(fig,5,2,'TileSpacing','compact','Padding','compact');
 labels=erase(tickers," Index");
-for q=1:size(meanP,2)
-    nexttile; plot(dates,squeeze(meanP(:,q,:)),'LineWidth',0.8); grid on; ylim([-1 1]);
-    ylabel('P'); xlabel('t');
-    title(sprintf('Mean P: %s / %s',labels(pair_i(q)),labels(pair_j(q))));
-    if q==1, legend(compose('Chain %d',1:nChains),'Location','best'); end
+entries=size(meanP,2)+size(meanH,2);
+for page=1:ceil(entries/10)
+    indices=(page-1)*10+(1:min(10,entries-(page-1)*10));
+    fig=figure('Visible','off','Color','w','Position',[50 50 1600 1100]);
+    figure_guard=onCleanup(@()close(fig));
+    tiledlayout(fig,ceil(numel(indices)/2),2,'TileSpacing','compact','Padding','compact');
+    for q=indices
+        nexttile;
+        if q<=size(meanP,2)
+            plot(dates,squeeze(meanP(:,q,:)),'LineWidth',0.8); ylim([-1 1]);
+            ylabel('P');
+            title(sprintf('Mean P: %s / %s',labels(pair_i(q)),labels(pair_j(q))));
+        else
+            j=q-size(meanP,2);
+            plot(dates,squeeze(meanH(:,j,:)),'LineWidth',0.8);
+            ylabel('h'); title(sprintf('Mean h: %s',labels(j)));
+        end
+        grid on; xlabel('t');
+        if q==indices(1), legend(compose('Chain %d',result.chain_ids),'Location','best'); end
+    end
+    sgtitle('Chain means by entry: P correlations and h log standard deviations');
+    exportgraphics(fig,pdfPath,'ContentType','vector','Append',page>1);
+    clear figure_guard
 end
-for j=1:size(meanH,2)
-    nexttile; plot(dates,squeeze(meanH(:,j,:)),'LineWidth',0.8); grid on;
-    ylabel('h'); xlabel('t');
-    title(sprintf('Mean h: %s',labels(j)));
-end
-sgtitle('Chain means by entry: P correlations and h log standard deviations');
-exportgraphics(fig,pdfPath,'ContentType','vector');
-close(fig);
 
 txtPath=fullfile(outdir,'convergence_summary.txt');
 fid=fopen(txtPath,'w');

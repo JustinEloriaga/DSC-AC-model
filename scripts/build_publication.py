@@ -105,8 +105,10 @@ def build(args):
     tests = read_csv(folder, "stationarity.csv", ["Ticker", "Transform", "Test", "Lags", "Statistic", "PValue", "Reject5pct", "N"])
     diagnostic = pd.read_csv(folder / "diagnostics.csv")
     tickers = list(returns.columns[1:])
-    if len(tickers) != 14 or len(full) != 91 or any("USDCNH" in x for x in tickers):
-        raise ValueError("Expected 14 non-USDCNH series and 91 distinct correlations")
+    n_series = len(tickers)
+    n_pairs = n_series * (n_series - 1) // 2
+    if n_series < 2 or len(set(tickers)) != n_series or len(full) != n_pairs:
+        raise ValueError("Expected distinct selected series and their complete pairwise correlations")
     dates = pd.to_datetime(returns.Date)
     if (len(returns) != summary["n_returns"] or len(levels) != summary["n_levels"] or
             returns.iloc[0, 0] != summary["first_return"] or returns.iloc[-1, 0] != summary["last_return"]):
@@ -132,32 +134,34 @@ def build(args):
         sample = rolling[rolling.Window.eq(window)]
         counts = sample.groupby("Date").size()
         expected_dates = pd.DatetimeIndex(dates.iloc[window-1:])
-        if not counts.index.equals(expected_dates) or not counts.eq(91).all():
+        if not counts.index.equals(expected_dates) or not counts.eq(n_pairs).all():
             raise ValueError(f"Incomplete date/pair coverage in {window}-week correlations")
         if not sample.N.between(0, window).all():
             raise ValueError(f"Invalid sample counts in {window}-week correlations")
     full = full.sort_values("PairIndex")
     # Verify the canonical column-major lower triangle, independently of labels.
-    expected = [(tickers[i], tickers[j]) for j in range(14) for i in range(j + 1, 14)]
+    expected = [(tickers[i], tickers[j]) for j in range(n_series) for i in range(j + 1, n_series)]
     if list(zip(full.TickerI, full.TickerJ)) != expected:
         raise ValueError("Pair ordering differs from MATLAB column-major lower triangle")
     first, last = returns.Date.iloc[0], returns.Date.iloc[-1]
     macros = {"FirstReturn": first, "LastReturn": last, "NumReturns": f"{len(returns):,}",
-              "NumLevels": f"{len(levels):,}", "InputHash": summary["source_hash"]}
+              "NumLevels": f"{len(levels):,}", "NumVariables": str(n_series),
+              "NumPairs": str(n_pairs), "NumStates": str(2 * n_series + n_pairs),
+              "InputHash": summary["source_hash"]}
     write("metrics.tex", "\n".join(f"\\newcommand{{\\{key}}}{{{tex(value)}}}" for key, value in macros.items()) + "\n")
 
-    corr = np.eye(14)
+    corr = np.eye(n_series)
     for row in full.itertuples():
         i, j = tickers.index(row.TickerI), tickers.index(row.TickerJ)
         corr[i, j] = corr[j, i] = row.Correlation
     fig, ax = plt.subplots(figsize=(8.2, 7))
     im = ax.imshow(corr, vmin=-1, vmax=1, cmap="RdBu_r")
     labels = [short(t) for t in tickers]
-    ax.set(xticks=np.arange(14), yticks=np.arange(14), xticklabels=labels, yticklabels=labels)
+    ax.set(xticks=np.arange(n_series), yticks=np.arange(n_series), xticklabels=labels, yticklabels=labels)
     ax.tick_params(axis="both", length=0, labelsize=8)
     plt.setp(ax.get_xticklabels(), rotation=60, ha="right", rotation_mode="anchor")
-    for i in range(14):
-        for j in range(14):
+    for i in range(n_series):
+        for j in range(n_series):
             ax.text(j, i, f"{corr[i,j]:.2f}", ha="center", va="center", fontsize=6.3,
                     color="white" if abs(corr[i,j]) > .64 else NAVY)
     fig.colorbar(im, ax=ax, shrink=.75, label="Pearson correlation")
@@ -187,8 +191,17 @@ def build(args):
             raise ValueError(f"No unique requested pair: {a}/{b}")
         return chosen.iloc[0]
 
-    pairs = [pair("SPXT", "SX5T"), pair("SPXT", "NKYTR"), pair("SPXT", "LUATTRUU"),
-             pair("SX5T", "LEATTREU"), pair("EURUSD", "GBPUSD"), pair("AUDUSD", "USDJPY")]
+    preferred = [("SPXT", "SX5T"), ("SPXT", "NKYTR"), ("SPXT", "LUATTRUU"),
+                 ("SX5T", "LEATTREU"), ("EURUSD", "GBPUSD"), ("AUDUSD", "USDJPY")]
+    available = {short(ticker) for ticker in tickers}
+    pairs = [pair(a, b) for a, b in preferred if a in available and b in available]
+    selected = {row.PairIndex for row in pairs}
+    for row in full.itertuples():
+        if len(pairs) >= min(6, n_pairs):
+            break
+        if row.PairIndex not in selected:
+            pairs.append(row)
+            selected.add(row.PairIndex)
 
     def pairplot(rows, filename, ncols=2, height=2.4, numbered=False, width=10):
         nrows = (len(rows) + ncols - 1) // ncols
@@ -216,12 +229,16 @@ def build(args):
 
     pairplot(pairs, "selected_pairs.pdf", height=2.4)
     for name, rows in [("equity", pairs[:2]), ("cross", pairs[2:4]), ("currency", pairs[4:])]:
-        pairplot(rows, name + "_pairs.pdf", height=3.2)
+        if rows:
+            pairplot(rows, name + "_pairs.pdf", height=3.2)
     appendix = []
     all_rows = list(full.itertuples())
     start = 0
     for page, size in enumerate([9, 9, 9] + [8] * 8):
+        if start >= len(all_rows):
+            break
         rows = all_rows[start:start + size]
+        size = len(rows)
         filename = f"all_pairs_{page+1:02d}.pdf"
         pairplot(rows, filename, ncols=3, height=3.2, numbered=True, width=8.2)
         appendix += ["\\clearpage\n" if page else "", f"\\subsection*{{Pairs {start+1}--{start+size}}}\n",
@@ -257,7 +274,7 @@ def build(args):
     stronglabel = f"{short(strong.TickerI)} / {short(strong.TickerJ)}"
     widelabel = f"{short(widest.TickerI)} / {short(widest.TickerJ)}"
     executive = (
-        f"The weekly panel contains \\textbf{{{len(returns):,} dates, 14 variables, and 91 pairs}}. "
+        f"The weekly panel contains \\textbf{{{len(returns):,} dates, {n_series} variables, and {n_pairs} pairs}}. "
         "Each weekly row is a Friday row: for each series, we use its last published level on or before that Friday. "
         "This keeps a local holiday in one market from deleting the whole week for every market. "
         "Japan's NKYTR series has one unusual 2019 holiday week; the affected returns are flagged so they can be checked separately.\n\n"
@@ -380,13 +397,13 @@ def build(args):
           "Source: saved \\texttt{diagnostics.csv}, percentage weekly log returns, "
           f"{first}--{last}; individual statistics and $p$-values remain in that file.}}\n")
     write("slides_diagnostics.tex", table(["Dependence diagnostic", "Rejections / tests"], deprows, small=False) +
-          "\\par\\medskip\\small These are nominal 5\\% decisions without multiplicity correction. The full report records stationarity specifications and all 91 correlation paths.\n")
-    write("slides_stationarity.tex", f"\\begin{{itemize}}\\item Return ADF rejects a unit root for {adfn} of 14 variables."
+          f"\\par\\medskip\\small These are nominal 5\\% decisions without multiplicity correction. The full report records stationarity specifications and all {n_pairs} correlation paths.\n")
+    write("slides_stationarity.tex", f"\\begin{{itemize}}\\item Return ADF rejects a unit root for {adfn} of {n_series} variables."
           f"\\item KPSS at 13 weeks flags: {flaggedtext}."
           "\\item Lag and bandwidth sensitivity matter for mean specification."
           "\\item Serial-dependence tests motivate an AR-mean sensitivity before production.\\end{itemize}\n")
     write("slides_findings.tex", "\\begin{itemize}"
-          f"\\item {len(returns):,} weekly observations support 91 pairwise paths."
+          f"\\item {len(returns):,} weekly observations support {n_pairs} pairwise paths."
           f"\\item Largest absolute full-sample correlation: {tex(stronglabel)} ({strong.Correlation:.2f})."
           f"\\item The 52-week {tex(widelabel)} path ranges from {ranges.loc[greatest,'min']:.2f} to {ranges.loc[greatest,'max']:.2f}."
           f"\\item ADF rejects a unit root for {adfn} return series. KPSS sensitivity qualifies the stationarity conclusion."
@@ -443,7 +460,6 @@ def make_bayesian_paths(args, write, figures, data_summary):
     summary_path = run / "pilot_summary.json"
     run_manifest_path = run / "run_manifest.json"
     required = [summary_path, run_manifest_path]
-    required += [run / f"figures/bayes_correlation_paths_all_{page:02d}.pdf" for page in range(1, 12)]
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
         raise FileNotFoundError("Posterior run is missing generated path files: " + ", ".join(missing))
@@ -451,6 +467,15 @@ def make_bayesian_paths(args, write, figures, data_summary):
         raise ValueError("--pilot and --posterior-run must refer to the same sampler run")
     sampler = json.loads(summary_path.read_text())
     run_manifest = json.loads(run_manifest_path.read_text())
+    n_pairs = data_summary.get("n_pairs", sampler.get("pairs", run_manifest.get("n_pairs")))
+    if type(n_pairs) is not int or n_pairs < 1:
+        raise ValueError("Publication data must identify a positive pair count")
+    page_count = (n_pairs + 8) // 9
+    required = [run / f"figures/bayes_correlation_paths_all_{page:02d}.pdf"
+                for page in range(1, page_count + 1)]
+    missing = [str(path) for path in required if not path.is_file()]
+    if missing:
+        raise FileNotFoundError("Posterior run is missing generated path files: " + ", ".join(missing))
     if run_manifest.get("source_hash") != data_summary["source_hash"]:
         raise ValueError("Posterior paths and publication data have different source hashes")
     draws = int(sampler.get("saved_draws", 0))
@@ -459,6 +484,8 @@ def make_bayesian_paths(args, write, figures, data_summary):
         raise ValueError("Posterior-path draw count disagrees with the sampler summary")
     if warmup != int(sampler.get("burnin", warmup)):
         raise ValueError("Posterior-path warm-up count disagrees with the sampler summary")
+    paths = dict(sampler)
+    paths["inference"] = run_manifest.get("inference")
     inference = read_inference_metadata(run, sampler, paths, run_manifest, data_summary)
     convergence_text = saved_convergence_text(run, sampler, inference)
     chains = int(sampler.get("num_chains", 1))
@@ -472,7 +499,7 @@ def make_bayesian_paths(args, write, figures, data_summary):
             raise ValueError("Per-chain counts disagree with pooled draws")
     pages = []
     copied = []
-    for page in range(1, 12):
+    for page in range(1, page_count + 1):
         source = run / f"figures/bayes_correlation_paths_all_{page:02d}.pdf"
         target = figures / f"bayesian_paths_all_{page:02d}.pdf"
         shutil.copy2(source, target)
@@ -528,11 +555,11 @@ def make_bayesian_paths(args, write, figures, data_summary):
           f"The selected sampler run retained {draws:,} draws pooled across {chains} original chain(s), "
           f"after discarding {warmup:,} warm-up iterations per chain. "
           "The dark line is the posterior median of the actual correlation $P_{ij,t}$ and the gray envelope "
-          "contains the pointwise 16th and 84th percentiles. Vertical colors use the same continuous scale "
+          "contains the pointwise 16th and 84th percentiles. " + band_text + " Vertical colors use the same continuous scale "
           "as Figure~1: blue for negative values, white near zero, and red for positive values, with intensity "
           "set by the posterior median. " + status_text + "\n"
           "The complete pairwise path figures are supplied in the companion PDF.\n\\clearpage\n"
-          "\\textbf{Companion figure file.} The complete set of 91 Bayesian correlation paths is generated as "
+          f"\\textbf{{Companion figure file.}} The complete set of {n_pairs} Bayesian correlation paths is generated as "
           "\\texttt{weekly\\_correlation\\_paths.pdf}. Each page uses the same vertical scale, color scale, "
           "and posterior summaries for every pair.\\par\n"
           "\\clearpage\n")
@@ -545,7 +572,7 @@ def make_bayesian_paths(args, write, figures, data_summary):
         "num_chains": chains,
         "convergence_established": convergence,
         "summary_sha256": hashlib.sha256(summary_path.read_bytes()).hexdigest(),
-        "paths_manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        "run_manifest_sha256": hashlib.sha256(run_manifest_path.read_bytes()).hexdigest(),
         "figure_sha256": {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in copied},
     }
     if inference:
@@ -769,6 +796,8 @@ def convergence_diagnostic_text(run, pilot):
     text += f"Overall diagnostic status: {status}."
     if report.get("quantities_checked", 0):
         actual = report.get("actual_draws_per_chain", [])
+        if not isinstance(actual, list):
+            actual = [actual]
         if actual:
             text += " Retained draws by chain: " + tex(", ".join(str(x) for x in actual)) + "."
         text += (f" Aligned diagnostic draws per chain: {report.get('draws_per_chain', 0)}; "

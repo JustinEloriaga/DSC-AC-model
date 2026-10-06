@@ -24,7 +24,8 @@ class InferencePublicationTests(unittest.TestCase):
         (self.run / "figures").mkdir(parents=True)
         self.figures.mkdir()
         self.args = SimpleNamespace(posterior_run=self.run, pilot=self.run / "pilot_summary.json")
-        self.summary = {"source_hash": "synthetic", "first_return": "2020-01-03", "last_return": "2020-06-26"}
+        self.summary = {"source_hash": "synthetic", "first_return": "2020-01-03", "last_return": "2020-06-26",
+                        "n_pairs": 91}
         self.sampler = {"saved_draws": 3, "burnin": 1, "convergence_established": False,
                         "first_date": "2020-01-03", "last_date": "2020-06-26",
                         "inference_mode": "fixed_parameter_smoothing"}
@@ -40,14 +41,14 @@ class InferencePublicationTests(unittest.TestCase):
                       "inference": deepcopy(self.metadata)}
         # PDF contents are opaque to make_bayesian_paths; it copies and hashes.
         # MATLAB plotting tests separately verify generated PDF figures.
-        for name in ["selected"] + [f"all_{page:02d}" for page in range(1, 12)]:
+        for name in [f"all_{page:02d}" for page in range(1, 12)]:
             (self.run / f"figures/bayes_correlation_paths_{name}.pdf").write_bytes(b"%PDF-fixture\n")
         self.output = {}
         self.persist()
 
     def persist(self):
         for name, data in [("pilot_summary.json", self.sampler), ("inference_metadata.json", self.metadata),
-                           ("run_manifest.json", self.manifest), ("figures/bayes_correlation_paths_manifest.json", self.paths)]:
+                           ("run_manifest.json", self.manifest)]:
             (self.run / name).write_text(json.dumps(data))
 
     def build_paths(self):
@@ -134,7 +135,7 @@ class InferencePublicationTests(unittest.TestCase):
         manifest = self.build_paths()
         self.assertEqual(manifest["inference"], self.metadata)
         self.assertIn("inference_metadata_sha256", manifest)
-        self.assertEqual(len(manifest["figure_sha256"]), 12)
+        self.assertEqual(len(manifest["figure_sha256"]), 11)
         text = self.output["bayesian_paths.tex"]
         for phrase in ["2020-03-27", "2020-06-26", "2026-09-26T11:22:33.000Z", "exclude parameter uncertainty",
                        "Historical state estimates can change", "dashed vertical line"]:
@@ -164,8 +165,8 @@ class InferencePublicationTests(unittest.TestCase):
         self.assertNotIn("exclude parameter uncertainty", text)
         self.assertNotIn("dashed vertical line", text)
 
-    def test_stale_figure_metadata_is_rejected_before_copying(self):
-        self.paths["inference"]["parameter_estimation_end"] = "2020-02-28"
+    def test_stale_run_metadata_is_rejected_before_copying(self):
+        self.manifest["inference"]["parameter_estimation_end"] = "2020-02-28"
         self.persist()
         with self.assertRaisesRegex(ValueError, "disagrees"):
             self.build_paths()
@@ -182,7 +183,7 @@ class InferencePublicationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "different inference modes"):
             self.build_paths()
         self.sampler["inference_mode"] = "fixed_parameter_smoothing"
-        self.paths["last_date"] = "2020-06-19"
+        self.sampler["last_date"] = "2020-06-19"
         self.persist()
         with self.assertRaisesRegex(ValueError, "sample dates disagree"):
             self.build_paths()
@@ -196,6 +197,15 @@ class InferencePublicationTests(unittest.TestCase):
         result = self.build_paths()
         self.assertNotIn("inference", result)
         self.assertIn("68\\% posterior bands", self.output["bayesian_paths.tex"])
+
+    def test_four_tickers_need_one_page_and_no_figure_manifest(self):
+        self.summary["n_pairs"] = 6
+        for page in range(2, 12):
+            (self.run / f"figures/bayes_correlation_paths_all_{page:02d}.pdf").unlink()
+        result = self.build_paths()
+        self.assertEqual(len(result["figure_sha256"]), 1)
+        self.assertIn("set of 6 Bayesian correlation paths", self.output["bayesian_paths.tex"])
+        self.assertFalse((self.run / "figures/bayes_correlation_paths_manifest.json").exists())
 
     def test_prior_snapshot_is_bound_to_selected_run(self):
         shared = self.root / "data"
@@ -232,7 +242,8 @@ class InferencePublicationTests(unittest.TestCase):
         self.paths["inference"] = deepcopy(self.metadata)
         self.manifest["inference"] = deepcopy(self.metadata)
         self.persist()
-        (self.run / "convergence_diagnostics.json").write_text(json.dumps(report))
+        (self.run / "convergence").mkdir(exist_ok=True)
+        (self.run / "convergence/convergence_diagnostics.json").write_text(json.dumps(report))
 
     def test_separate_diagnostics_and_chain_counts_are_published(self):
         self.add_diagnostics()
@@ -244,11 +255,19 @@ class InferencePublicationTests(unittest.TestCase):
                        "maximum rank-normalized", "Not enough retained draws"]:
             self.assertIn(phrase, text)
 
+    def test_single_chain_scalar_draw_count_is_published(self):
+        self.add_diagnostics()
+        report = deepcopy(self.sampler["convergence"])
+        report.update(status="insufficient_chains", chains=1, actual_draws_per_chain=6, draws_per_chain=6)
+        (self.run / "convergence/convergence_diagnostics.json").write_text(json.dumps(report))
+        text = publication.convergence_diagnostic_text(self.run, {"convergence": report})
+        self.assertIn("Retained draws by chain: 6.", text)
+
     def test_stale_diagnostics_are_rejected_before_copying(self):
         self.add_diagnostics()
         stale = deepcopy(self.sampler["convergence"])
         stale["max_rhat"] = 1.01
-        (self.run / "convergence_diagnostics.json").write_text(json.dumps(stale))
+        (self.run / "convergence/convergence_diagnostics.json").write_text(json.dumps(stale))
         with self.assertRaisesRegex(ValueError, "convergence diagnostics disagree"):
             self.build_paths()
         self.assertEqual(list(self.figures.iterdir()), [])

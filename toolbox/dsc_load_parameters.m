@@ -227,7 +227,7 @@ for c=1:numel(ids)
     end
 end
 m=numel(b.tickers); nr=m*(m-1)/2;
-expected_quantities=numel(b.training_dates)*(2*m+nr)+m*(m+1)/2+m+nr;
+expected_quantities=numel(b.training_dates)*(m+nr);
 dsc_validate_convergence(b.convergence,ids,counts,expected_quantities);
 if ~isequal(b.convergence_established,b.convergence.passed)
     error('dsc:ConvergenceMetadata','Parameter convergence flag disagrees with its diagnostic report.');

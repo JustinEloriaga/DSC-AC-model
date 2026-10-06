@@ -5,11 +5,12 @@ end
 function testCsvToEstimateAndLoadWorkflow(testCase)
 % Exercise the public options on a small synthetic 14-variable CSV. No
 % real-market estimation or shared publication output is generated here.
-root=fileparts(fileparts(fileparts(mfilename('fullpath'))));
+root=fileparts(fileparts(mfilename('fullpath')));
 addpath(root,fullfile(root,'toolbox'),fullfile(root,'scripts'));
 prior_warning=warning('off','econ:adftest:InvalidStatistic');
 warning_guard=onCleanup(@()warning(prior_warning)); %#ok<NASGU>
 folder=tempname; mkdir(folder);
+testCase.addTeardown(@()rmdir(folder,'s'));
 cfg=weekly_config(); header=readlines(cfg.source_file);
 dates=(datetime(2003,8,4):days(1):datetime(2005,10,7))';
 dates=dates(~ismember(weekday(dates),[1 7]));
@@ -26,7 +27,7 @@ clear guard
 result=run_weekly_model_report(SourceFile=source,OutputRoot=folder, ...
     EstimateParameters=true,EstimationEndDate="2005-08-26", ...
     WarmupIterations=1,RetainedDraws=2,MaxHours=.1, ...
-    RunTests=false,BuildReport=false,VerifyReport=false);
+    CorrelationThreads=1,RunTests=false,BuildReport=false,VerifyReport=false);
 verifyEqual(testCase,result.saved_draws,2);
 verifyEqual(testCase,result.inference_mode,'fixed_parameter_smoothing');
 verifyEqual(testCase,result.inference.parameter_smoothing,'mean');
@@ -42,19 +43,19 @@ verifyEqual(testCase,result.inference.smoothing_start,'2005-08-12');
 verifyEqual(testCase,result.inference.smoothing_end,'2005-10-07');
 verifyTrue(testCase,isfile(result.paths.parameters));
 verifyTrue(testCase,all(isfile(result.figure_paths)));
-verifyTrue(testCase,isfile(fullfile(result.run_dir,'prior_summary.json')));
-estimated=load(fullfile(result.run_dir,'estimation','checkpoint.mat'),'checkpoint');
-verifyEqual(testCase,size(estimated.checkpoint.identity.returns),[3 14]);
-verifyEqual(testCase,estimated.checkpoint.identity.dates, ...
+verifyFalse(testCase,isfile(fullfile(result.run_dir,'prior_summary.json')));
+verifyFalse(testCase,isfile(fullfile(result.run_dir,'result.mat')));
+estimated=load(result.paths.parameters,'parameters');
+verifyEqual(testCase,size(estimated.parameters.training_returns),[3 14]);
+verifyEqual(testCase,estimated.parameters.training_dates, ...
     (datetime(2005,8,12)+calweeks(0:2))');
-smoothed=load(result.paths.checkpoint,'checkpoint');
-verifyEqual(testCase,size(smoothed.checkpoint.identity.returns),[9 14]);
-verifyEqual(testCase,smoothed.checkpoint.identity.dates,result.dates);
-verifyTrue(testCase,all(estimated.checkpoint.identity.mask,'all'));
-verifyTrue(testCase,all(smoothed.checkpoint.identity.mask,'all'));
+smoothed=load(fullfile(result.run_dir,'posterior_chunk_000001.mat'),'chunk');
+verifyEqual(testCase,size(smoothed.chunk.h,1),9);
+verifyEqual(testCase,smoothed.chunk.dates,result.dates);
+verifyTrue(testCase,all(estimated.parameters.training_mask,'all'));
 loaded=run_weekly_model_report(SourceFile=source,OutputRoot=folder, ...
     EstimateParameters=false,WarmupIterations=1,RetainedDraws=2,MaxHours=.1, ...
-    RunTests=false,BuildReport=false,VerifyReport=false);
+    CorrelationThreads=1,RunTests=false,BuildReport=false,VerifyReport=false);
 verifyEqual(testCase,loaded.paths.parameters,result.paths.parameters);
 verifyEqual(testCase,loaded.inference.parameters_estimated_at,result.inference.parameters_estimated_at);
 verifyEqual(testCase,loaded.T,9);
@@ -62,10 +63,13 @@ verifyEqual(testCase,loaded.dates,result.dates);
 verifyEqual(testCase,loaded.inference.calibration_weeks,104);
 verifyEqual(testCase,loaded.inference.parameter_smoothing,'mean');
 verifyFalse(testCase,loaded.inference.parameter_uncertainty_in_bands);
-cp=load(loaded.paths.checkpoint,'checkpoint');
-verifyEqual(testCase,cp.checkpoint.identity.dates,result.dates);
-verifyEqual(testCase,size(cp.checkpoint.state.r,1),9);
+cp=load(fullfile(loaded.run_dir,'posterior_chunk_000001.mat'),'chunk');
+verifyEqual(testCase,cp.chunk.dates,result.dates);
+verifyEqual(testCase,size(cp.chunk.h,1),9);
 verifyEqual(testCase,numel(dir(fullfile(folder,'parameters','dsc_parameters_*.mat'))),1);
 latest=jsondecode(fileread(fullfile(folder,'latest_model_report.json')));
 verifyEqual(testCase,latest.inference.parameter_file,result.paths.parameters);
+verifyEqual(testCase,latest.actual_retained_draws_per_chain,2);
+verifyEqual(testCase,latest.run_result.saved_draws_total,2);
+verifyEqual(testCase,latest.run_result.status,loaded.status);
 end

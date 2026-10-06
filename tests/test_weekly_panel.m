@@ -30,7 +30,7 @@ verifyEqual(testCase,numel(p.pair_i),91);
 verifyEqual(testCase,[p.pair_i(1),p.pair_j(1)],[2,1]);
 verifyFalse(testCase,any(contains(p.tickers,'USDCNH')));
 verifyEqual(testCase,p.source_hash, ...
-    'f11259e4c6347a54204cecb4f5ac3363c06ef2b05f787ab33ed9ab99e04c5bd7');
+    '8a426136e2cb53d3f695711a0a28a150bef7d9948a606a11f056be5962bb9ba6');
 verifyEqual(testCase,p.excluded_final_rows,4);
 end
 
