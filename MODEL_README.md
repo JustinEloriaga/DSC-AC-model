@@ -290,12 +290,8 @@ convergence pass/fail decision.
 | File | Purpose |
 |---|---|
 | `scripts/plot_bayes_correlation_paths.m` | Builds Bayesian correlation path figures from posterior chunks. |
-| `scripts/report_chain_progress.py` | Prints progress from saved run files. |
 | `scripts/build_publication.py` | Builds publication tables, figures, and report assets from saved evidence. |
 | `scripts/check_publication.py` | Checks generated publication PDF structure/rendering. |
-| `scripts/build_parameter_explanation.py` | Builds parameter explanation material from saved parameter output. |
-| `scripts/summarize_speed_pilot.py` | Summarizes sampler speed/pilot evidence. |
-| `scripts/verify_sequential_bayes_scalar.py` | Verifies the scalar sequential Bayes derivation/output. |
 
 ### Tests
 

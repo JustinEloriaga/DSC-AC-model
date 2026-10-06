@@ -47,5 +47,4 @@ All 20 sweeps are warm-up. There are **0 retained posterior draws**, and converg
 Rebuild this summary without rerunning estimation:
 
 ```sh
-python3 scripts/summarize_speed_pilot.py --run outputs/weekly_research/runs/20260913-184612-504-chain1
 ```
