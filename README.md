@@ -22,7 +22,6 @@ main                                      % data analysis and prior calibration 
 results = run_weekly_research('analysis'); % same workflow, explicit entrypoint
 checks = run_weekly_acceptance();          % tests plus saved JSON evidence
 results = run_weekly_research('pilot');    % at most 20 sweeps or 30 minutes
-pilot_checks = verify_weekly_pilot(results.pilot.run_dir); % no further MCMC
 ```
 
 The pilot is explicitly **not a converged posterior estimate**. Its default 20 iterations are all warm-up. A full multi-chain production run is not part of the first-stage authorization.
@@ -71,17 +70,14 @@ Legacy `tvsvar_modified_msv2_gam2_gen` and original MARS support functions remai
 The correlation stage supports a batched C++ MEX kernel using MATLAB's own LAPACK/BLAS. It evaluates the same matrix-log inverse and observed-subspace Gaussian likelihood, with the same convergence tolerance and positive-definiteness checks. Within the fixed-point solve, it computes only the diagonal of the matrix exponential; it builds the full correlation matrix once after convergence. Standardized residuals are reused across correlation proposals. The default four native threads evaluate separate contiguous blocks of weekly dates, with deterministic summation in date order; this does not run multiple chains. Set `cfg.correlation_threads=1` to use a single native thread.
 
 ```matlab
-build_info = build_dsc_mex();              % compile locally for this MATLAB/platform
+addpath('build'); build_info = build_dsc_mex(); % compile locally for this MATLAB/platform
 checks = run_weekly_acceptance();          % includes native/reference and resume checks
-benchmark = benchmark_dsc_kernel();        % fixed saved state; no MCMC
 cfg = weekly_config();
 cfg.correlation_backend = 'mex';           % require the compiled implementation
 results = run_weekly_research('pilot',cfg); % fresh run, same 20-sweep/30-minute cap
-verify_weekly_pilot(results.pilot.run_dir);
-verify_dsc_likelihood(results.pilot.run_dir); % independent final likelihood check
 ```
 
-The default `auto` backend uses MEX when available and MATLAB otherwise; `matlab` explicitly selects the portable implementation. Native binaries are rebuilt locally and excluded from Git. Checkpoints record the resolved backend, MATLAB version, and a hash of sampler sources and the native binary. A changed implementation requires a fresh run; historical checkpoints are preserved. Native and MATLAB calculations agree within numerical tolerance, but floating-point differences can eventually change individual MCMC accept/reject decisions. Invalid correlation proposals are counted in run diagnostics.
+The default `mex` backend requires the compiled native kernels; `matlab` explicitly selects the portable implementation, while `auto` remains available as an opt-in fallback mode. Native binaries are rebuilt locally and excluded from Git. Checkpoints record the resolved backend, MATLAB version, and a hash of sampler sources and the native binary. A changed implementation requires a fresh run; historical checkpoints are preserved. Native and MATLAB calculations agree within numerical tolerance, but floating-point differences can eventually change individual MCMC accept/reject decisions. Invalid correlation proposals are counted in run diagnostics.
 
 The 13 September rerun completed all 20 warm-up sweeps in 10.83 minutes. Comparing the same first 13 sweeps, mean time fell from 132.58 to 30.69 seconds (**4.32x faster**), with matching proposal counts. Across all 20 new sweeps the mean was 32.46 seconds; peak MATLAB process RSS was 1.149 GiB. All 33 tests, 1,204 final-state correlation matrices and the independent final-likelihood check passed. See [the performance analysis](research/sampler_performance.md) and the run-local `performance_comparison.json` for measurements and projection limits. These warm-up draws do not provide posterior estimates or credible bands.
 
@@ -89,7 +85,7 @@ The 13 September rerun completed all 20 warm-up sweeps in 10.83 minutes. Compari
 
 Derived numerical artifacts live under `outputs/weekly_research/`:
 
-- `data/weekly_panel.mat`, weekly returns/levels and per-cell quality CSVs.
+- Report-only data exports (`weekly_panel.mat`, weekly returns/levels, quality CSVs, and `data_summary.json`) are created temporarily when `BuildReport=true` and removed after publication.
 - Descriptive, stationarity, serial-dependence and prior-calibration outputs.
 - All 91 full-sample and 52/104-week rolling correlations.
 - A run manifest and timestamped chain directories under `runs/`.

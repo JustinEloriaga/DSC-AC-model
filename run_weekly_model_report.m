@@ -24,7 +24,7 @@ arguments
     options.RhatThreshold (1,1) double {mustBeGreaterThan(options.RhatThreshold,1),mustBeFinite} = 1.01
     options.MinESS (1,1) double {mustBePositive,mustBeFinite} = 400
     options.MaxMCSERatio (1,1) double {mustBePositive,mustBeFinite} = 0.05
-    options.CorrelationBackend (1,1) string {mustBeMember(options.CorrelationBackend,["auto","mex","matlab"])} = "auto"
+    options.CorrelationBackend (1,1) string {mustBeMember(options.CorrelationBackend,["auto","mex","matlab"])} = "mex"
     options.CorrelationThreads (1,1) double {mustBeInteger,mustBeGreaterThanOrEqual(options.CorrelationThreads,1),mustBeLessThanOrEqual(options.CorrelationThreads,64)} = 4
     options.SourceFile (1,1) string = ""
     options.OutputRoot (1,1) string = ""
@@ -33,6 +33,7 @@ arguments
     options.EstimationEndDate (1,1) string = ""
     options.ParameterDirectory (1,1) string = ""
     options.ParameterFile (1,1) string = ""
+    options.KeepNewestParameterFiles (1,1) double {mustBeInteger,mustBeNonnegative} = 3
     options.ParameterSmoothing (1,1) string {mustBeMember(options.ParameterSmoothing,["draws","mean"])} = "mean"
     options.RunTests (1,1) logical = true
     options.BuildReport (1,1) logical = true
@@ -78,6 +79,15 @@ cfg.estimation_end_date = char(options.EstimationEndDate);
 cfg.parameter_dir = char(options.ParameterDirectory);
 cfg.parameter_file = char(options.ParameterFile);
 cfg.parameter_smoothing = char(options.ParameterSmoothing);
+cfg.write_publication_exports = options.BuildReport;
+cfg.keep_newest_parameter_files = options.KeepNewestParameterFiles;
+parameter_cleanup = onCleanup(@()delete_old_parameter_files( ...
+    cfg.parameter_dir,cfg.keep_newest_parameter_files)); %#ok<NASGU>
+data_stamp = char(datetime('now','Format','yyyyMMdd-HHmmss-SSS'));
+cfg.data_output_dir = fullfile(cfg.output_root,'data', ...
+    ['run-' data_stamp '-chain' num2str(cfg.chain_id)]);
+if ~exist(cfg.data_output_dir,'dir'), mkdir(cfg.data_output_dir); end
+data_workspace_cleanup = onCleanup(@()delete_data_workspace(cfg.data_output_dir)); %#ok<NASGU>
 
 % Reject unsupported execution settings before data preparation or sampling.
 if cfg.auto_extend&&(strcmp(cfg.convergence_mode,'off')||cfg.max_retained_draws<options.RetainedDraws)
@@ -99,7 +109,8 @@ if ~exist(run_dir,'dir'), mkdir(run_dir); end
 run_manifest = analysis.manifest;
 run_manifest.run_kind = 'configurable sampler and report pipeline';
 run_manifest.requested_warmup_iterations = options.WarmupIterations;
-run_manifest.requested_retained_draws = options.RetainedDraws;
+run_manifest.requested_retained_draws = options.RetainedDraws; % legacy alias: per chain
+run_manifest.requested_retained_draws_per_chain = options.RetainedDraws;
 run_manifest.requested_total_sweeps = cfg.max_iterations;
 run_manifest.requested_num_chains = cfg.num_chains;
 run_manifest.parallel_chains = cfg.parallel_chains;
@@ -121,13 +132,15 @@ if any(result.saved_draws_per_chain < options.RetainedDraws)
 end
 
 result.figure_paths = plot_bayes_correlation_paths(run_dir);
+result.convergence_artifacts = write_convergence_artifacts(run_dir,result);
 result.report_pdf = '';
 result.publication_checked = false;
 if options.BuildReport
+    publication_exports_cleanup = onCleanup(@()delete_publication_exports(cfg.data_output_dir)); %#ok<NASGU>
     builder = fullfile(root,'scripts','build_publication.py');
     summary_path = fullfile(run_dir,'pilot_summary.json');
-    command = sprintf('%s %s --results %s --pilot %s --posterior-run %s --report-only', ...
-        shell_arg(options.PythonExecutable),shell_arg(builder),shell_arg(cfg.output_root), ...
+    command = sprintf('%s %s --data %s --pilot %s --posterior-run %s --report-only', ...
+        shell_arg(options.PythonExecutable),shell_arg(builder),shell_arg(cfg.data_output_dir), ...
         shell_arg(summary_path),shell_arg(run_dir));
     [status,output] = system(command,'-echo');
     if status~=0
@@ -147,14 +160,41 @@ end
 
 latest = struct('run_dir',run_dir,'summary',fullfile(run_dir,'pilot_summary.json'), ...
     'figures',fullfile(run_dir,'figures'),'report_pdf',result.report_pdf, ...
-    'requested_retained_draws',options.RetainedDraws,'actual_retained_draws',result.saved_draws, ...
+    'requested_retained_draws',options.RetainedDraws, ...
+    'requested_retained_draws_per_chain',options.RetainedDraws, ...
+    'actual_retained_draws',result.saved_draws, ...
+    'actual_retained_draws_total',result.saved_draws, ...
     'warmup_iterations',cfg.burnin,'thin',cfg.thin,'completed_iterations',result.completed_iterations, ...
     'status',result.status,'created_at',char(datetime('now','Format','yyyy-MM-dd''T''HH:mm:ss')));
 latest.inference=result.inference;
+latest.manifest=run_manifest;
 latest.num_chains=cfg.num_chains;
 latest.actual_retained_draws_per_chain=result.saved_draws_per_chain;
 latest.convergence=result.convergence;
 write_json_local(fullfile(cfg.output_root,'latest_model_report.json'),latest);
+end
+
+function delete_publication_exports(data_dir)
+files = {'weekly_levels.csv','weekly_returns.csv','weekly_panel.mat', ...
+    'weekly_quality.csv','data_summary.json'};
+for k=1:numel(files)
+    path = fullfile(data_dir,files{k});
+    if isfile(path), delete(path); end
+end
+end
+
+function delete_data_workspace(data_dir)
+if isfolder(data_dir), rmdir(data_dir,'s'); end
+end
+
+function delete_old_parameter_files(parameter_dir,keep_count)
+if keep_count <= 0 || ~isfolder(parameter_dir), return; end
+files = dir(fullfile(char(parameter_dir),'dsc_parameters_*.mat'));
+if numel(files) <= keep_count, return; end
+[~,order] = sort({files.name},'descend');
+for k=keep_count+1:numel(order)
+    delete(fullfile(files(order(k)).folder,files(order(k)).name));
+end
 end
 
 function value = shell_arg(value)

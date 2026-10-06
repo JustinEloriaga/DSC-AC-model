@@ -7,14 +7,23 @@ mode=validatestring(mode,{'analysis','pilot'});
 root=fileparts(mfilename('fullpath'));
 addpath(fullfile(root,'toolbox'));
 if ~exist(cfg.output_root,'dir'), mkdir(cfg.output_root); end
+if isfield(cfg,'data_output_dir') && strlength(string(cfg.data_output_dir)) > 0
+    outdir = char(cfg.data_output_dir);
+else
+    outdir = fullfile(cfg.output_root,'data');
+end
+if ~exist(outdir,'dir'), mkdir(outdir); end
 panel=prepare_weekly_panel(cfg);
 [priors,inference]=dsc_prepare_inference(panel,cfg);
 summary=analyze_weekly_panel(panel,cfg);
-save(fullfile(cfg.output_root,'data','calibrated_priors.mat'),'priors','cfg','-v7.3');
-write_json(fullfile(cfg.output_root,'data','prior_summary.json'),priors);
+save(fullfile(outdir,'calibrated_priors.mat'),'priors','cfg','-v7.3');
+write_json(fullfile(outdir,'prior_summary.json'),priors);
+% Manifest schema version, independent of the saved-parameter schema.
 manifest.schema_version=1;
 manifest.source_file=cfg.source_file;
 manifest.source_hash=panel.source_hash;
+manifest.raw_start=char(string(panel.raw_dates(1),'yyyy-MM-dd'));
+manifest.raw_end=char(string(panel.raw_dates(end),'yyyy-MM-dd'));
 manifest.return_start=char(string(panel.dates(1),'yyyy-MM-dd'));
 manifest.return_end=char(string(panel.dates(end),'yyyy-MM-dd'));
 manifest.n_returns=size(panel.returns,1);
@@ -22,6 +31,9 @@ manifest.n_variables=size(panel.returns,2);
 manifest.n_pairs=numel(panel.pair_i);
 manifest.tickers=panel.tickers;
 manifest.config=cfg;
+if isfield(manifest.config,'source_file')
+    manifest.config=rmfield(manifest.config,'source_file');
+end
 manifest.matlab_version=version;
 [status,revision]=system(['git -C "' root '" rev-parse HEAD']);
 if status==0, manifest.git_revision=strtrim(revision); end
@@ -35,7 +47,6 @@ manifest.inference=struct('estimate_parameters',inference.estimate_parameters, .
     'model_start',char(string(inference.smoothing_panel.dates(1),'yyyy-MM-dd')), ...
     'state_scope','historical smoothing after the reserved initial calibration weeks');
 manifest.production_authorized=false;
-write_json(fullfile(cfg.output_root,'run_manifest.json'),manifest);
 result=struct('panel',panel,'summary',summary,'priors',priors,'manifest',manifest,'inference',inference);
 if strcmp(mode,'pilot')
     if ~inference.estimate_parameters||inference.training_panel.dates(end)~=panel.dates(end)

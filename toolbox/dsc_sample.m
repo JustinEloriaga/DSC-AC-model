@@ -56,7 +56,7 @@ else
         cfg.fixed_parameters=validate_fixed_parameters(cfg.fixed_parameters,m,nr);
     end
 end
-if ~isfield(cfg,'correlation_backend'), cfg.correlation_backend='matlab'; end
+if ~isfield(cfg,'correlation_backend'), cfg.correlation_backend='mex'; end
 if ~isfield(cfg,'correlation_threads'), cfg.correlation_threads=1; end
 if ~isscalar(cfg.correlation_threads)||~isfinite(cfg.correlation_threads)|| ...
         cfg.correlation_threads<1||cfg.correlation_threads>64||cfg.correlation_threads~=floor(cfg.correlation_threads)

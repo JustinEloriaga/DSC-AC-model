@@ -145,7 +145,7 @@ tickers and defaults `ParameterSmoothing` to `"draws"`.
 | `RhatThreshold` | `1.01` | Maximum allowed R-hat. |
 | `MinESS` | `400` | Minimum bulk and tail effective sample size. |
 | `MaxMCSERatio` | `0.05` | Maximum mean MCSE divided by posterior standard deviation. |
-| `CorrelationBackend` | `"auto"` | `"auto"`, `"mex"`, or `"matlab"`. |
+| `CorrelationBackend` | `"mex"` | `"mex"`, `"matlab"`, or `"auto"`. |
 | `CorrelationThreads` | `4` | Native date-block threads per chain for the MEX backend. |
 | `SourceFile` | `""` | Optional alternative CSV path. Empty uses `weekly_config.m`. |
 | `OutputRoot` | `""` | Optional alternative output directory. Empty uses `weekly_config.m`. |
@@ -154,6 +154,7 @@ tickers and defaults `ParameterSmoothing` to `"draws"`.
 | `EstimationEndDate` | `""` | Optional estimation cutoff date. Empty uses the latest available return. |
 | `ParameterDirectory` | `""` | Directory containing saved parameter files. Empty uses `OutputRoot/parameters`. |
 | `ParameterFile` | `""` | Exact saved parameter file to load. Empty selects the latest. |
+| `KeepNewestParameterFiles` | `3` | Keep only this many newest saved parameter files at the end of the run. Set `0` to disable cleanup. |
 | `ParameterSmoothing` | `"mean"` | `"mean"` uses posterior mean parameters; `"draws"` propagates saved parameter draws. Model 1 defaults this option to `"draws"`. |
 | `RunTests` | `true` | Run acceptance checks before the model. |
 | `BuildReport` | `true` | Build the publication report after sampling. |
@@ -250,12 +251,7 @@ convergence pass/fail decision.
 | `run_weekly_pilot.m` | Bounded sampler pilot helper. |
 | `run_weekly_acceptance.m` | Acceptance checks for the MATLAB workflow. |
 | `main.m` | Simple analysis entry point. |
-| `build_dsc_mex.m` | Builds the native correlation and historical-mean smoothing MEX kernels. |
-| `benchmark_dsc_sampler.m` | Times retained draws on identical saved input, with optional profiling. |
-| `compare_dsc_sampler_benchmarks.m` | Compares timings and every retained latent-state and parameter draw. |
-| `benchmark_dsc_kernel.m` | Benchmarks the MATLAB/MEX correlation kernels on saved state. |
-| `verify_weekly_pilot.m` | Validates saved pilot output without rerunning MCMC. |
-| `verify_dsc_likelihood.m` | Independent likelihood check for saved sampler output. |
+| `build/build_dsc_mex.m` | Builds the native correlation and historical-mean smoothing MEX kernels. |
 
 ### Core Model Functions
 
@@ -307,7 +303,6 @@ convergence pass/fail decision.
 | `tests/test_parameter_files.m` | Tests saved parameter schemas and identity checks. |
 | `tests/test_bayes_paths.m` | Tests Bayesian path plotting behavior. |
 | `tests/test_publication_inference.py` | Tests publication inference metadata handling. |
-| `tests/test_chain_progress.py` | Tests chain progress reporting. |
 | `tests/verify_exports.py` | Independent export reconciliation for saved outputs. |
 | `tests/test_model_report.m` | Public entry-point integration test on synthetic data. |
 | `tests/test_parallel_chains.m` | Parallel-chain integration test. |
@@ -318,7 +313,6 @@ convergence pass/fail decision.
 |---|---|
 | `data/yad_tickers_no_usdcnh_from_20030804.csv` | Main 14-variable source CSV used by default. |
 | `data/yad_tickers.csv` | Source CSV including USDCNH. |
-| `data.csv`, `record_data/`, `residuals_history/` | Historical or supporting data artifacts. |
 | `research/` | LaTeX report/slides sources, bibliography, derivations, and performance notes. |
 | `outputs/weekly_research/` | Default numerical output directory. |
 | `outputs/weekly_research_model1/` | Default numerical output directory for `run_weekly_model1_report`. |
@@ -336,7 +330,7 @@ Important files inside or near that run are:
 
 | File | Meaning |
 |---|---|
-| `run_manifest.json` | Configuration, data hash, requested draws, MATLAB version, Git/source provenance. |
+| `run_manifest.json` inside each run directory | Configuration, data hash, requested draws, MATLAB version, Git/source provenance for that run. |
 | `pilot_summary.json` | Actual iterations, retained draws, stop reason, timings, backend details. |
 | `checkpoint.mat` | Saved sampler state and RNG state. |
 | `posterior_chunk_*.mat` | Retained posterior draws. |
@@ -345,7 +339,7 @@ Important files inside or near that run are:
 | `convergence_diagnostics.*` | Diagnostic JSON/CSV/MAT files when convergence reporting is enabled. |
 | `inference_metadata.json` | Estimation/smoothing mode and parameter-file metadata. |
 | `parameters/dsc_parameters_*.mat` | Saved parameter files, when parameters are estimated. |
-| `latest_model_report.json` | Pointer to the latest run under an output root. |
+| `latest_model_report.json` | Pointer to the latest run, including its manifest, under an output root. |
 
 ## Requirements
 

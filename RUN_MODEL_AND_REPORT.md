@@ -53,6 +53,8 @@ result = run_weekly_model_report( ...
 
 `ParameterFile` is optional. The loader checks the variable order, pair order, parameter dimensions, and the dates, returns, and observation masks in both the reserved calibration block and the subsequent estimation block. Additional weeks are allowed. Changed or missing historical observations require a fresh estimation run. The saved calibration length determines where smoothing starts, even if the current configuration differs. The original saved priors are reused without calibrating them on later observations. A corrupt latest artifact is reported visibly instead of silently selecting an older model. Parameter files from the earlier version that included calibration weeks in the likelihood are rejected with an instruction to re-estimate; their original files are preserved.
 
+By default, the run keeps only the three newest files matching `dsc_parameters_*.mat` in the parameter directory. Set `KeepNewestParameterFiles=0` to retain all parameter snapshots, or choose another positive number to keep that many.
+
 `ParameterSmoothing` controls how saved parameters enter smoothing. The default `ParameterSmoothing="mean"` uses the posterior means of `V`, `sig2h`, and `sig2r` as fixed plug-in values, so the plotted bands condition on those means and exclude parameter uncertainty. `ParameterSmoothing="draws"` explicitly reuses the retained parameter draws, so the reported correlation bands include variation across those saved parameter draws. Parameter files retain their full draws in either mode. In both cases the latent mean, volatility, and correlation paths are sampled jointly from the first week after the reserved calibration period through the latest week. This includes the requested period from the estimation cutoff through the latest week, and earlier modeled estimates can also change. The calibration weeks never re-enter the likelihood. This is historical smoothing, not a real-time filter. Smoothing still needs warm-up and retained draws, and most correlation calculations remain, so it need not be substantially faster.
 
 With an earlier estimation cutoff, the workflow runs **two stages**: parameter estimation through the cutoff, followed by conditional smoothing through the latest week. Each stage uses the specified warm-up, retained-draw target, and `MaxHours` budget; the combined sampling budget can therefore be twice `MaxHours`. With no earlier cutoff and the default `ParameterSmoothing="mean"`, `EstimateParameters=true` estimates parameters first, then runs a second smoothing stage using their posterior means. Explicit `ParameterSmoothing="draws"` uses a single joint estimation and its joint posterior draws for the figures when no earlier cutoff is set. In report/off mode, a time-capped partial parameter draw set can be saved if every requested chain has retained chunks and there are at least two retained draws overall; actual counts are recorded. Convergence is not established by saving a file. Numerical failures and warm-up-only runs cannot publish parameter files.
@@ -69,10 +71,10 @@ The lower-level configuration equivalents are `cfg.estimate_parameters`, `cfg.es
 Build the accelerated correlation kernel once for the installed MATLAB version and platform:
 
 ```matlab
-build_dsc_mex()
+addpath('build'); build_dsc_mex()
 ```
 
-The default `CorrelationBackend="auto"` uses that MEX file when it is available and otherwise uses the slower MATLAB implementation.
+The default `CorrelationBackend="mex"` requires the compiled MEX file. Use `CorrelationBackend="matlab"` explicitly for the portable interpreted implementation.
 
 ## Basic run
 
@@ -239,7 +241,7 @@ Automatic batches resume the complete saved state and RNG stream. For manual con
 | `ChunkSize` | `10` | Retained draws per MAT-v7.3 posterior chunk. |
 | `Seed` | `20260914` | Base random-number seed. |
 | `ChainID` | `1` | First chain identifier; subsequent IDs increase by one. Effective seed is `Seed + ID - 1`. |
-| `CorrelationBackend` | `"auto"` | `"auto"`, `"mex"`, or `"matlab"`. |
+| `CorrelationBackend` | `"mex"` | `"mex"`, `"matlab"`, or `"auto"`. |
 | `CorrelationThreads` | `4` | Native date-block threads used by the MEX correlation calculation. |
 | `SourceFile` | configured CSV | Optional path to another source CSV with the expected layout. |
 | `OutputRoot` | `outputs/weekly_research` | Numerical data, run directories, tests, and latest-run pointer. |
@@ -274,7 +276,7 @@ outputs/weekly_research/runs/TIMESTAMP-chainN-wW-rR-thinK/
 
 The run directory contains:
 
-- `run_manifest.json`: data hash, configuration, requested draw counts, MATLAB version, and code provenance.
+- `runs/<run-id>/run_manifest.json`: data hash, configuration, requested draw counts, MATLAB version, and code provenance for that run.
 - `checkpoint.mat` and `posterior_chunk_*.mat`: complete sampler/RNG state and retained draws for a single-chain stage. For multiple chains these live under `chains/chain_001/`, `chains/chain_002/`, and so on, each with its own summary/result.
 - `pilot_summary.json`: actual iterations, draws, timing, stop reason, and implementation details.
 - `convergence_diagnostics.json`, `.csv`, and `.mat`: overall status/thresholds/provenance and per-quantity R-hat, ESS, MCSE, availability, and pass/fail details. Parameter estimation has its own copies under `estimation/` when a separate estimation stage is used.
@@ -286,12 +288,12 @@ The run directory contains:
 
 The main report is written to `output/pdf/weekly_correlation_report.pdf`. The complete set of Bayesian correlation paths from the same run is written to `output/pdf/weekly_correlation_paths.pdf`. The path-file vertical background colors reproduce Figure 1's continuous scale: blue for negative correlation, white near zero, and red for positive correlation, with intensity determined by the posterior median.
 
-`outputs/weekly_research/latest_model_report.json` records the latest run directory, summary, figure directory, and report path.
+`outputs/weekly_research/latest_model_report.json` records the latest run directory, summary, figure directory, report path, and the latest run manifest. The old root-level `run_manifest.json` is no longer written.
 It also records the inference metadata. In MATLAB, inspect `result.inference` and `result.paths.parameters` for the selected parameter file and estimation date.
 
 In `"report"`/`"off"` mode, a time-limited run can produce preliminary output if enough valid draws exist. Parameter saving additionally requires retained chunks from every requested chain; a chain that never started cannot be silently omitted. A numerical failure stops the workflow. Completed checkpoints are preserved in all these cases.
 
-Inspect `result.convergence` for the final state-chain assessment, `result.inference.estimation_convergence` for the saved estimation assessment, and `result.saved_draws_per_chain` for actual state-chain counts. The report records estimation and state-smoothing statuses separately.
+Draw counts are reported explicitly: `requested_retained_draws_per_chain` is the target for each chain, `actual_retained_draws_per_chain` contains one count per chain, and `actual_retained_draws_total` is their sum. The older unsuffixed fields remain as compatibility aliases. Inspect `result.convergence` for the final state-chain assessment and `result.inference.estimation_convergence` for the saved estimation assessment. The report records estimation and state-smoothing statuses separately.
 
 ## Rebuild the report without rerunning the model
 

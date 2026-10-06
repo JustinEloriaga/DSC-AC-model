@@ -82,22 +82,19 @@ This performance benchmark does not establish posterior convergence.
 From the Model 1 worktree, compile once for this MATLAB installation:
 
 ```matlab
-build_dsc_mex();
+addpath('build'); build_dsc_mex();
 result = run_weekly_model1_report( ...
     WarmupIterations=10, RetainedDraws=100, ...
     CorrelationBackend="mex", CorrelationThreads=4, RunTests=false);
 ```
 
-Both kernels are already built locally. `CorrelationBackend="auto"` also
-uses them. `"matlab"` selects the interpreted reference mean/correlation
-implementations. Everything runs through MATLAB; Python is not needed.
+Both kernels are already built locally. `CorrelationBackend="mex"` is the
+default and requires them. `"matlab"` selects the interpreted reference
+mean/correlation implementations. Everything runs through MATLAB; Python is
+not needed.
 Native binaries are excluded from Git and must be rebuilt on another
 device. Historical checkpoints remain available but cannot be resumed
 with the changed sampler implementation.
-
-`benchmark_dsc_sampler` measures a sampler source tree on input from a
-saved checkpoint, with optional profiling. `compare_dsc_sampler_benchmarks`
-reconciles complete retained output and writes the timing comparison.
 
 Raw reports, frozen baseline sources, profiles, tests, checkpoints and
 draws remain local in the primary `DSC-AC-model` worktree under
@@ -106,4 +103,3 @@ draws remain local in the primary `DSC-AC-model` worktree under
 - `model1-optimized-final-100-20261005-214359-090/performance_comparison.json`
 - `main-optimized-final-100-20261005-214435-010/performance_comparison.json`
 - `model1_test_results.mat`
-

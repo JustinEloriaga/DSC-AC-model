@@ -13,7 +13,11 @@ end
 if ~isfield(cfg,'output_root') || strlength(string(cfg.output_root)) == 0
     error('weekly:OutputRoot','Set cfg.output_root for reproducible analysis outputs.');
 end
-outdir = fullfile(cfg.output_root,'data');
+if isfield(cfg,'data_output_dir') && strlength(string(cfg.data_output_dir)) > 0
+    outdir = char(cfg.data_output_dir);
+else
+    outdir = fullfile(cfg.output_root,'data');
+end
 if ~isfolder(outdir), mkdir(outdir); end
 [T,m] = size(panel.returns);
 q = numel(panel.pair_i);
@@ -22,7 +26,10 @@ assert(size(panel.levels,1)==T+1 && numel(panel.dates)==T, ...
 assert(all(diff(panel.dates)==days(7)), ...
     'weekly:Calendar','The weekly calendar must not have omitted periods.');
 if ~isfield(panel,'observation_mask'), panel.observation_mask=true(T,m); end
-save(fullfile(outdir,'weekly_panel.mat'),'panel','-v7.3');
+write_publication_exports = isfield(cfg,'write_publication_exports') && cfg.write_publication_exports;
+if write_publication_exports
+    save(fullfile(outdir,'weekly_panel.mat'),'panel','-v7.3');
+end
 
 dates = string(panel.dates,'yyyy-MM-dd');
 levelDates = string(panel.level_dates,'yyyy-MM-dd');
@@ -30,14 +37,18 @@ returnTable = [table(dates,'VariableNames',{'Date'}), ...
     array2table(panel.returns,'VariableNames',cellstr(panel.tickers))];
 levelTable = [table(levelDates,'VariableNames',{'Date'}), ...
     array2table(panel.levels,'VariableNames',cellstr(panel.tickers))];
-writetable(returnTable,fullfile(outdir,'weekly_returns.csv'));
-writetable(levelTable,fullfile(outdir,'weekly_levels.csv'));
+if write_publication_exports
+    writetable(returnTable,fullfile(outdir,'weekly_returns.csv'));
+    writetable(levelTable,fullfile(outdir,'weekly_levels.csv'));
+end
 nL = T+1;
 quality = table(repmat(levelDates,m,1),repelem(panel.tickers',nL), ...
     reshape(string(panel.source_dates,'yyyy-MM-dd'),[],1), ...
     panel.age_days(:),panel.carried(:),panel.closure_level_mask(:), ...
     'VariableNames',{'LevelDate','Ticker','SourceDate','AgeDays','Carried','ClosureLevel'});
-writetable(quality,fullfile(outdir,'weekly_quality.csv'));
+if write_publication_exports
+    writetable(quality,fullfile(outdir,'weekly_quality.csv'));
+end
 returnQuality = table(repmat(dates,m,1),repelem(panel.tickers',T), ...
     panel.closure_return_mask(:),panel.observation_mask(:), ...
     'VariableNames',{'Date','Ticker','ClosureReturn','ObservedForModel'});
@@ -195,11 +206,13 @@ ix=find(changes.Window==104 & isfinite(changes.NetChange));
 [~,order]=sort(abs(changes.NetChange(ix)),'descend');
 summary.largest_104_week_net_changes=table2struct(changes(ix(order(1:min(5,numel(order)))),:));
 summary.series=table2struct(series);
-fid=fopen(fullfile(outdir,'data_summary.json'),'w');
-if fid<0, error('weekly:WriteSummary','Cannot write data_summary.json.'); end
-cleanup=onCleanup(@()fclose(fid));
-fprintf(fid,'%s\n',jsonencode(summary,'PrettyPrint',true));
-clear cleanup
+if write_publication_exports
+    fid=fopen(fullfile(outdir,'data_summary.json'),'w');
+    if fid<0, error('weekly:WriteSummary','Cannot write data_summary.json.'); end
+    cleanup=onCleanup(@()fclose(fid));
+    fprintf(fid,'%s\n',jsonencode(summary,'PrettyPrint',true));
+    clear cleanup
+end
 save(fullfile(outdir,'panel_analysis.mat'),'summary','series','correlations', ...
     'changes','stationarity','diagnostics','adfCandidates','-v7.3');
 end

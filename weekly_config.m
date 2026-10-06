@@ -37,6 +37,6 @@ cfg.estimation_end_date = ''; % Optional yyyy-MM-dd cutoff; empty uses the lates
 cfg.parameter_dir = ''; % Empty resolves to output_root/parameters.
 cfg.parameter_file = ''; % Empty loads the latest timestamped parameter file.
 cfg.parameter_smoothing = 'mean'; % 'mean' uses posterior means; 'draws' propagates saved parameter draws.
-cfg.correlation_backend = 'auto'; % Use the validated MEX kernel if built; otherwise MATLAB.
+cfg.correlation_backend = 'mex'; % Require the validated native MEX kernel by default.
 cfg.correlation_threads = 4; % Per chain: account for num_chains when running in parallel.
 end

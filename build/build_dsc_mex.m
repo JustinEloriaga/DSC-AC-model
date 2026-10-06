@@ -7,7 +7,7 @@ function build_info = build_dsc_mex()
 % After building, add toolbox to the MATLAB path to call
 % [ll,P,L,logdet,iterations] = dsc_corr_batch_mex(r,Z,mask,threads).
 % threads is optional (default 1); native date workers are limited to 64.
-root = fileparts(mfilename('fullpath'));
+root = fileparts(fileparts(mfilename('fullpath')));
 target_dir = fullfile(root,'toolbox');
 source = fullfile(target_dir,'dsc_corr_batch_mex.cpp');
 mean_source = fullfile(target_dir,'dsc_mean_mex.cpp');

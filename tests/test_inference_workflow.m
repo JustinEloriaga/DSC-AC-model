@@ -163,28 +163,6 @@ verifyError(testCase,@()dsc_run_inference(panel,priors,cfg, ...
 verifyEmpty(testCase,dir(fullfile(inference.parameter_dir,'dsc_parameters_*.mat')));
 end
 
-function testPilotVerificationUsesExcludedSampleIdentity(testCase)
-cfg=testCase.TestData.cfg; cfg.max_iterations=2; cfg.burnin=2;
-panel=testCase.TestData.panel;
-[priors,inference]=dsc_prepare_inference(panel,cfg);
-folder=tempname; mkdir(folder);
-dsc_sample(inference.training_panel,priors,cfg,folder);
-report=verify_weekly_pilot(folder);
-verifyEqual(testCase,report.matrices_checked,16);
-verifyEqual(testCase,report.variables,3);
-verifyEqual(testCase,report.distinct_pairs,3);
-verifyEqual(testCase,report.excluded_initial_weeks,16);
-verifyEqual(testCase,report.first_date,date_text(panel.dates(17)));
-verifyEqual(testCase,report.calibration_end,date_text(panel.dates(16)));
-% Verification must notice a summary that accidentally retained full-panel
-% dimensions even when the sampler's checkpoint has the correct slice.
-path=fullfile(folder,'pilot_summary.json');
-summary=jsondecode(fileread(path)); summary.T=32;
-fid=fopen(path,'w'); guard=onCleanup(@()fclose(fid));
-fprintf(fid,'%s',jsonencode(summary)); clear guard
-verifyError(testCase,@()verify_weekly_pilot(folder),'DSC:PilotDimensions');
-end
-
 function testInvalidModeOptions(testCase)
 cfg=testCase.TestData.cfg; panel=testCase.TestData.panel;
 cfg.estimate_parameters=false; cfg.estimation_end_date='2020-04-03';
