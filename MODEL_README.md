@@ -261,10 +261,6 @@ convergence pass/fail decision.
 
 | File | Purpose |
 |---|---|
-| `core/tvsvar_modified_msv2_gam2_gen.m` | Legacy generalized TVP-SVAR model function retained for reproducibility. |
-| `core/kfilter.m`, `core/kback.m` | State-space filtering and backward sampling utilities. |
-| `core/make_varXY.m`, `core/lag.m` | VAR design matrix helpers. |
-| `core/lognormpdf.m`, `core/LogAbsDet.m`, `core/mvnrnd_modified.m`, `core/olsblock.m` | Numerical/statistical helper routines. |
 
 ### Toolbox
 
@@ -280,7 +276,7 @@ convergence pass/fail decision.
 | `toolbox/dsc_volatility_likelihood.m` | Exact cached Gaussian likelihood change for a volatility coordinate. |
 | `toolbox/dsc_save_parameters.m` | Saves and loads timestamped parameter files with identity checks. |
 | `toolbox/dsc_load_parameters.m` | Loads saved parameter artifacts. |
-| `toolbox/dsc_calibrate_priors.m`, `toolbox/calibrate_priors.m` | Empirical-Bayes prior calibration helpers. |
+| `toolbox/dsc_calibrate_priors.m` | Empirical-Bayes prior calibration helper. |
 | `toolbox/dsc_mcmc_diagnostics.m`, `toolbox/dsc_diagnose_chains.m`, `toolbox/dsc_validate_convergence.m` | Convergence and diagnostic calculations. |
 | `toolbox/dsc_credible_bands.m` | Computes pointwise 16/50/84 percent posterior bands from retained draws. |
 | `toolbox/dsc_corr_matrix.m`, `toolbox/dsc_corr_batch_mex.cpp` | Correlation matrix construction and optional native acceleration. |
@@ -288,18 +284,12 @@ convergence pass/fail decision.
 | `toolbox/dsc_panel_slice.m` | Slices panel structs over date ranges. |
 | `toolbox/dsc_parallel_available.m` | Checks whether process-based parallel chains can run. |
 | `toolbox/dsc_sampler_signature.m` | Hash/signature metadata for sampler provenance. |
-| `toolbox/loglike_yt_given_ht_Pt.m`, `toolbox/loglike_yt_given_rt_ht.m`, `toolbox/log_mvnpdf.m` | Likelihood helpers. |
-| `toolbox/concat_chains.m` | Chain output combination helper. |
-| `toolbox/slice_sampling_v02.m` | Legacy sampler utility. |
-| `toolbox/veclAtoC.m` | Legacy matrix conversion helper. |
-| `toolbox/estimation_RANDOMCORR.m` | Legacy estimation path retained for reference. |
 
 ### Scripts
 
 | File | Purpose |
 |---|---|
 | `scripts/plot_bayes_correlation_paths.m` | Builds Bayesian correlation path figures from posterior chunks. |
-| `scripts/run_weekly_sampler_100x10.m` | User-requested short sampler run: 100 sweeps with 10 warm-up sweeps. |
 | `scripts/report_chain_progress.py` | Prints progress from saved run files. |
 | `scripts/build_publication.py` | Builds publication tables, figures, and report assets from saved evidence. |
 | `scripts/check_publication.py` | Checks generated publication PDF structure/rendering. |
@@ -323,8 +313,8 @@ convergence pass/fail decision.
 | `tests/test_publication_inference.py` | Tests publication inference metadata handling. |
 | `tests/test_chain_progress.py` | Tests chain progress reporting. |
 | `tests/verify_exports.py` | Independent export reconciliation for saved outputs. |
-| `tests/integration/test_model_report.m` | Public entry-point integration test on synthetic data. |
-| `tests/integration/test_parallel_chains.m` | Parallel-chain integration test. |
+| `tests/test_model_report.m` | Public entry-point integration test on synthetic data. |
+| `tests/test_parallel_chains.m` | Parallel-chain integration test. |
 
 ### Data, Research, and Outputs
 
@@ -337,7 +327,6 @@ convergence pass/fail decision.
 | `outputs/weekly_research/` | Default numerical output directory. |
 | `outputs/weekly_research_model1/` | Default numerical output directory for `run_weekly_model1_report`. |
 | `output/pdf/` | Publication PDF destination used by the report builder. |
-| `convergence_test/` | Older convergence scripts and PDFs retained for reference. |
 
 ## Outputs Created by a Run
 
@@ -384,7 +373,7 @@ assertSuccess(checks);
 Run the public integration test:
 
 ```matlab
-checks = runtests('tests/integration/test_model_report.m');
+checks = runtests('tests/test_model_report.m');
 assertSuccess(checks);
 ```
 

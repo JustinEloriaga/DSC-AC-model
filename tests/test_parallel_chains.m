@@ -1,12 +1,12 @@
 function tests=test_parallel_chains
-% Opt-in integration test: runtests('tests/integration/test_parallel_chains.m').
+% Opt-in integration test: runtests('tests/test_parallel_chains.m').
 % Kept outside ordinary acceptance because it starts two MATLAB processes.
 tests=functiontests(localfunctions);
 end
 
 function testProcessChainsMatchSequentialDraws(testCase)
 root=fileparts(fileparts(fileparts(mfilename('fullpath'))));
-addpath(root,fullfile(root,'toolbox'),fullfile(root,'core'));
+addpath(root,fullfile(root,'toolbox'));
 assumeTrue(testCase,dsc_parallel_available(),'Parallel Computing Toolbox is required for this opt-in test.');
 folder=tempname; mkdir(folder);
 testCase.addTeardown(@()rmdir(folder,'s'));

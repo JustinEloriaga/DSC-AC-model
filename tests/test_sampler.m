@@ -4,7 +4,7 @@ end
 
 function setupOnce(testCase)
 root=fileparts(fileparts(mfilename('fullpath')));
-addpath(fullfile(root,'core'),fullfile(root,'toolbox'));
+addpath(fullfile(root,'toolbox'));
 rng(100,'twister'); T=32; m=3;
 panel=struct(); panel.returns=randn(T,m)*[1 .2 -.1;0 .8 .2;0 0 .5];
 panel.dates=(datetime(2003,8,15)+calweeks(0:T-1))';

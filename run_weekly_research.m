@@ -5,7 +5,7 @@ if nargin<1 || isempty(mode), mode='analysis'; end
 if nargin<2 || isempty(cfg), cfg=weekly_config(); end
 mode=validatestring(mode,{'analysis','pilot'});
 root=fileparts(mfilename('fullpath'));
-addpath(fullfile(root,'toolbox'),fullfile(root,'core'));
+addpath(fullfile(root,'toolbox'));
 if ~exist(cfg.output_root,'dir'), mkdir(cfg.output_root); end
 panel=prepare_weekly_panel(cfg);
 [priors,inference]=dsc_prepare_inference(panel,cfg);
@@ -55,7 +55,7 @@ function hash=code_hash(root)
 % Include tracked and newly authored MATLAB code; Git HEAD alone is not
 % sufficient provenance for an uncommitted research implementation.
 md=java.security.MessageDigest.getInstance('SHA-256');
-folders={'','core','toolbox'};
+folders={'','toolbox'};
 for k=1:numel(folders)
     files=dir(fullfile(root,folders{k},'*.m'));
     [~,order]=sort({files.name}); files=files(order);

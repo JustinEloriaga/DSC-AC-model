@@ -44,7 +44,7 @@ if options.VerifyReport && ~options.BuildReport
     error('DSC:PipelineOptions','VerifyReport requires BuildReport=true.');
 end
 root = fileparts(mfilename('fullpath'));
-addpath(root,fullfile(root,'toolbox'),fullfile(root,'core'),fullfile(root,'scripts'));
+addpath(root,fullfile(root,'toolbox'),fullfile(root,'scripts'));
 
 cfg = weekly_config();
 if strlength(options.SourceFile)>0, cfg.source_file=char(options.SourceFile); end

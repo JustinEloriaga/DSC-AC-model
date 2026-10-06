@@ -314,7 +314,7 @@ This publication command reads saved results only. It does not start MATLAB or r
 `run_weekly_acceptance()` runs the regular regression tests. The more expensive synthetic CSV-to-figures check is separate so normal runs do not repeatedly export its 24 test PDFs:
 
 ```matlab
-checks = runtests('tests/integration/test_model_report.m');
+checks = runtests('tests/test_model_report.m');
 assertSuccess(checks);
 ```
 
@@ -323,7 +323,7 @@ It verifies both estimation and loading through the public entry point using tem
 To check real parallel-worker execution separately (requires Parallel Computing Toolbox):
 
 ```matlab
-checks = runtests('tests/integration/test_parallel_chains.m');
+checks = runtests('tests/test_parallel_chains.m');
 assertSuccess(checks);
 ```
 

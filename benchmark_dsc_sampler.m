@@ -16,7 +16,7 @@ if strlength(options.OutputRoot)==0
     options.OutputRoot=fullfile(root,'outputs','weekly_research','performance','sampler_optimization');
 end
 previous_path=path; restore=onCleanup(@()path(previous_path));
-addpath(fullfile(root,'core'),fullfile(options.SourceRoot,'toolbox'));
+addpath(fullfile(options.SourceRoot,'toolbox'));
 clear dsc_sample dsc_sampler_signature dsc_corr_batch_mex dsc_mean_mex
 clear dsc_corr_matrix dsc_random_walk_draw dsc_volatility_likelihood
 loaded=load(checkpoint_file,'checkpoint'); identity=loaded.checkpoint.identity;

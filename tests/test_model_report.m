@@ -6,7 +6,7 @@ function testCsvToEstimateAndLoadWorkflow(testCase)
 % Exercise the public options on a small synthetic 14-variable CSV. No
 % real-market estimation or shared publication output is generated here.
 root=fileparts(fileparts(fileparts(mfilename('fullpath'))));
-addpath(root,fullfile(root,'toolbox'),fullfile(root,'core'),fullfile(root,'scripts'));
+addpath(root,fullfile(root,'toolbox'),fullfile(root,'scripts'));
 prior_warning=warning('off','econ:adftest:InvalidStatistic');
 warning_guard=onCleanup(@()warning(prior_warning)); %#ok<NASGU>
 folder=tempname; mkdir(folder);

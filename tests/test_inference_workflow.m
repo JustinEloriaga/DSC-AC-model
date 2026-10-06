@@ -4,7 +4,7 @@ end
 
 function setupOnce(testCase)
 root=fileparts(fileparts(mfilename('fullpath')));
-addpath(root,fullfile(root,'toolbox'),fullfile(root,'core'));
+addpath(root,fullfile(root,'toolbox'));
 rng(773,'twister'); T=32; m=3;
 panel=struct('returns',randn(T,m),'dates',(datetime(2020,1,3)+calweeks(0:T-1))', ...
     'tickers',["A","B","C"],'observation_mask',true(T,m),'source_hash','workflow-synthetic');
