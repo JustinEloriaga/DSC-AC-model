@@ -39,6 +39,7 @@ b=dsc_load_parameters(testCase.TestData.folder,testCase.TestData.panel);
 verifyEqual(testCase,b.parameter_estimate,testCase.TestData.result.parameter_estimate,'AbsTol',1e-14);
 verifyEqual(testCase,b.priors,testCase.TestData.priors);
 verifyEqual(testCase,b.schema_version,4);
+verifyEqual(testCase,b.run_id,fileparts_basename(testCase.TestData.result.run_dir));
 verifyEqual(testCase,b.parameter_draws,load_parameter_draws(testCase.TestData.result.run_dir));
 verifyEqual(testCase,b.training_returns,testCase.TestData.training.returns);
 verifyEqual(testCase,b.training_mask,testCase.TestData.training.observation_mask);
@@ -52,8 +53,13 @@ verifyEqual(testCase,b.retained_draws,3);
 verifyFalse(testCase,b.convergence_established);
 verifyEqual(testCase,b.path,path);
 verifyEqual(testCase,b.estimation_end,testCase.TestData.panel.dates(end));
-verifyNotEmpty(testCase,regexp(path,'dsc_parameters_\d{8}T\d{9}Z_.*\.mat$','once'));
+verifyEqual(testCase,path,fullfile(testCase.TestData.folder, ...
+    ['parameters_' fileparts_basename(testCase.TestData.result.run_dir) '.mat']));
 verifyEmpty(testCase,dir(fullfile(testCase.TestData.folder,'parameters_pending_*.mat')));
+end
+
+function name=fileparts_basename(path)
+[~,name]=fileparts(path);
 end
 
 function testAppendPermitsChangedSourceHashKeepsPriors(testCase)
@@ -154,7 +160,7 @@ result=testCase.TestData.result; result.status='failed';
 verifyError(testCase,@()save_result(testCase,result),'dsc:ParametersFailedRun');
 result=rmfield(testCase.TestData.result,'parameter_estimate');
 verifyError(testCase,@()save_result(testCase,result),'dsc:ParametersResult');
-verifyEmpty(testCase,dir(fullfile(testCase.TestData.folder,'dsc_parameters_*.mat')));
+verifyEmpty(testCase,dir(fullfile(testCase.TestData.folder,'parameters_*.mat')));
 end
 
 function testRejectsInvalidDrawsBeforePublishing(testCase)
@@ -264,7 +270,7 @@ checkpoint=original; save(cp_path,'checkpoint','-v7');
 chunk_path=fullfile(result.chain_dirs{2},'posterior_chunk_000001.mat'); loaded=load(chunk_path,'chunk'); chunk=loaded.chunk;
 chunk.tickers=chunk.tickers([2 1 3]); save(chunk_path,'chunk','-v7');
 verifyError(testCase,@()save_result(testCase,result),'dsc:ParametersIdentity');
-verifyEmpty(testCase,dir(fullfile(testCase.TestData.folder,'dsc_parameters_*.mat')));
+verifyEmpty(testCase,dir(fullfile(testCase.TestData.folder,'parameters_*.mat')));
 end
 
 function testRejectsForgedConvergenceAndPerDrawProvenance(testCase)

@@ -11,10 +11,10 @@ if ~is_text_scalar(parameter_dir)
 end
 parameter_dir=char(parameter_dir);
 if isempty(explicit_file)||(isstring(explicit_file)&&isscalar(explicit_file)&&strlength(explicit_file)==0)
-    files=dir(fullfile(parameter_dir,'dsc_parameters_*.mat'));
+    files=dir(fullfile(parameter_dir,'parameters_*.mat'));
     files=files(~[files.isdir]);
     if isempty(files)
-        error('dsc:ParametersMissing','No dsc_parameters_*.mat files exist in %s. Estimate parameters first or choose an explicit parameter file.',parameter_dir);
+        error('dsc:ParametersMissing','No parameters_<run-id>.mat files exist in %s. Estimate parameters first or choose an explicit parameter file.',parameter_dir);
     end
     latest=-Inf; bundle=[]; path='';
     for k=1:numel(files)
@@ -132,6 +132,15 @@ if ~is_text_scalar(b.source_hash)||~is_text_scalar(b.run_dir)|| ...
         ~isfield(b.estimation_config,'p')||~isequal(b.estimation_config.p,0)|| ...
         ~isfield(b.estimation_config,'prior_weeks')||~isequal(b.estimation_config.prior_weeks,b.calibration_weeks)
     error('dsc:ParametersSchema','Invalid source or configuration metadata in %s.',path);
+end
+if isfield(b,'run_id')
+    [run_parent,run_name]=fileparts(char(b.run_dir)); %#ok<ASGLU>
+    if strcmp(run_name,'estimation')
+        [~,run_name]=fileparts(run_parent);
+    end
+    if ~is_text_scalar(b.run_id)||~strcmp(char(b.run_id),run_name)
+        error('dsc:ParametersSchema','Run ID does not match the source run directory in %s.',path);
+    end
 end
 if ~finite_scalar(b.retained_draws)||b.retained_draws<2||b.retained_draws~=floor(b.retained_draws)
     error('dsc:ParametersDraws','Parameter file %s does not contain an estimate from at least two retained draws.',path);

@@ -3,7 +3,7 @@ function path = dsc_save_parameters(result,panel,priors,cfg,parameter_dir,calibr
 %   Retained parameter draws are saved for reuse. Their posterior averages
 %   are also stored as a plug-in summary. A checkpoint's last state
 %   (including a warm-up state) is never a parameter estimate.
-%   Writes a timestamped schema-versioned MAT file atomically, preserving
+%   Writes a run-linked, schema-versioned MAT file atomically, preserving
 %   the exact likelihood sample, separate excluded calibration weeks and
 %   calibrated priors for future checks. Both dated blocks are mandatory.
 if ~isstruct(result)||~isscalar(result)||~isfield(result,'status')|| ...
@@ -117,7 +117,14 @@ m=numel(panel.tickers); nr=numel(panel.pair_i);
 expected_quantities=numel(panel.dates)*(m+nr);
 dsc_validate_convergence(parameters.convergence,chain_ids,chain_counts,expected_quantities);
 parameters.convergence_established=parameters.convergence.passed;
+source_run_dir=char(java.io.File(char(result.run_dir)).getCanonicalPath());
+[source_parent,source_name]=fileparts(source_run_dir);
+if strcmp(source_name,'estimation')
+    source_run_dir=source_parent;
+    [~,source_name]=fileparts(source_run_dir);
+end
 parameters.run_dir=char(result.run_dir);
+parameters.run_id=source_name;
 parameters.estimation_config=struct();
 for field={'p','seed','chain_id','burnin','thin','max_iterations','prior_weeks', ...
         'shrinkage','calibration_windows','calibration_window','ig_shape','kB', ...
@@ -127,9 +134,8 @@ for field={'p','seed','chain_id','burnin','thin','max_iterations','prior_weeks',
         parameters.estimation_config.(field{1})=cfg.(field{1});
     end
 end
-stamp=char(string(estimated,"yyyyMMdd'T'HHmmssSSS'Z'"));
 unique=char(java.util.UUID.randomUUID());
-path=fullfile(parameter_dir,['dsc_parameters_' stamp '_' unique '.mat']);
+path=fullfile(parameter_dir,['parameters_' source_name '.mat']);
 temporary=fullfile(parameter_dir,['parameters_pending_' unique '.mat']);
 cleanup=onCleanup(@() remove_temporary(temporary));
 save(temporary,'parameters','-v7');

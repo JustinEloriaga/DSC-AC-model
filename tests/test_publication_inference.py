@@ -7,6 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/build_publication.py"
 SPEC = importlib.util.spec_from_file_location("build_publication", SCRIPT)
@@ -289,6 +290,51 @@ class InferencePublicationTests(unittest.TestCase):
         report["min_ess_tail"] = 5
         with self.assertRaisesRegex(ValueError, "recorded criteria"):
             publication.validate_diagnostic_summary(report)
+
+
+class PublicationOutputTests(unittest.TestCase):
+    def test_build_workspace_is_deleted_after_success_and_failure(self):
+        for fail in (False, True):
+            visited = []
+
+            def generate(args, workspace):
+                visited.append(workspace)
+                (workspace / "generated.tex").write_text("temporary")
+                if fail:
+                    raise RuntimeError("compilation failed")
+                return "finished"
+
+            with patch.object(publication, "build_in_workspace", side_effect=generate):
+                if fail:
+                    with self.assertRaisesRegex(RuntimeError, "compilation failed"):
+                        publication.build(SimpleNamespace())
+                else:
+                    self.assertEqual(publication.build(SimpleNamespace()), "finished")
+            self.assertFalse(visited[0].exists())
+
+    def test_compilation_keeps_only_two_run_named_pdfs(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            research = root / "research"
+            research.mkdir()
+            for name in ("weekly_correlation_report.tex", "weekly_correlation_paths.tex", "references.bib"):
+                (research / name).write_text("source")
+            workspace = root / "workspace"
+            workspace.mkdir()
+
+            def compile_stub(command, cwd, **kwargs):
+                stem = Path(command[-1]).stem
+                (cwd / "build" / (stem + ".pdf")).write_bytes(b"%PDF-fixture\n")
+                (cwd / "build" / (stem + ".log")).write_text("No issues")
+
+            with patch.object(publication, "ROOT", root), patch.object(publication.subprocess, "run", side_effect=compile_stub):
+                paths = publication.compile_publication(
+                    workspace, "20261007-120000-chain1-w100-r100-thin1")
+            self.assertEqual({p.name for p in paths}, {
+                "report_20261007-120000-chain1-w100-r100-thin1.pdf",
+                "figure_20261007-120000-chain1-w100-r100-thin1.pdf"})
+            self.assertEqual(set((root / "report").iterdir()), set(paths))
+            self.assertFalse((root / "research/generated").exists())
 
 
 if __name__ == "__main__":

@@ -30,7 +30,7 @@ Verify the build with:
 This compilation is computer-specific. If the repository is copied to another
 computer, rebuild the MEX files there rather than copying the compiled files.
 
-## Run Model 1
+## Run Model
 
 From the repository root in MATLAB:
 
@@ -38,7 +38,6 @@ From the repository root in MATLAB:
         WarmupIterations=100, RetainedDraws=50000, ...
         NumChains=4, MaxHours=12, ...
         VariableNames=["NKYTR Index","SPXT Index","SX5T Index","TUKXG Index"], ...
-        OutputRoot="outputs/weekly_research_model", ...
         ParameterSmoothing="draws", CorrelationBackend="mex");
 
 The model reads data/yad_tickers_no_usdcnh_from_20030804.csv, prepares weekly
@@ -66,9 +65,7 @@ figures.
     EstimateParameters     Estimate parameters, then smooth P and h. DEFAULT: true.
     EstimationEndDate      Optional estimation cutoff date. DEFAULT: "".
     SourceFile             Input CSV. DEFAULT: configured Model 1 CSV.
-    OutputRoot             Output directory. DEFAULT: configured output root.
     VariableNames          Tickers to estimate. DEFAULT: "all".
-    ParameterDirectory     Saved-parameter directory. DEFAULT: OutputRoot/parameters.
     ParameterSmoothing     "draws" or "mean". MODEL 1 DEFAULT: "draws".
     CorrelationBackend     "mex" or "matlab". DEFAULT: "mex".
     CorrelationThreads     Threads for correlation calculations. DEFAULT: "auto".
@@ -93,9 +90,24 @@ Short test:
 
 ## Outputs
 
-The default output directory for this four-ticker example is
-outputs/weekly_research_model/.
-Each run is stored under outputs/weekly_research_model/runs/<run-id>/.
+All model results go to the repository's outputs/ folder. This location is fixed;
+there is no output-directory option. The layout is:
+
+    outputs/
+        parameters/               Saved parameter snapshots; newest three kept by default.
+        runs/<run-id>/            Draws, provenance, convergence results, and figures.
+        latest_model_report.json  Summary of the newest run.
+        matlab_test_results.json  Results of the latest acceptance tests.
+
+Parameter snapshots use names like
+`parameters_20261006-213950-chain1-w1000-r10000-thin1.mat`.
+The filename is the matching `runs/<run-id>/` folder name; each run manifest
+also records the parameter-file path.
+
+The data/ folder is created temporarily inside outputs/ during preparation
+and removed after the run. EstimateParameters=false loads parameters from
+outputs/parameters/ automatically.
+After a successful run, only the three newest completed run folders are kept.
 
 Permanent results include:
 
@@ -104,10 +116,20 @@ Permanent results include:
     convergence/convergence_diagnostics.json Convergence results.
     convergence/chain_mean_paths.pdf         Chain means for P and h entries.
     figures/                                 Bayesian correlation-path PDFs.
-    latest_model_report.json                 Summary of the newest run.
 
 Temporary panel-analysis files and regenerable run handoffs are always removed
 after the run. There is no option to retain them.
+
+BuildReport=true requires Python with NumPy, pandas, and Matplotlib, plus a
+TeX installation with latexmk. VerifyReport=true also requires Poppler and
+Pillow. Generated .tex files, copied charts, LaTeX build files, and verification
+images are temporary and deleted automatically. The three newest reports and
+three newest figures are kept directly in report/, with no subfolder:
+
+    report/report_<run-id>.pdf
+    report/figure_<run-id>.pdf
+
+The run ID matches the corresponding folder under outputs/runs/.
 
 `run_weekly_model_report` is the single entry point. Select the variables with
 `VariableNames`; Model 1 is the four-ticker example above.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rebuild the LaTeX report and Beamer PDF from saved results; never runs MCMC.
+"""Build two run-linked publication PDFs from saved results; never runs MCMC.
 
 Requires Python 3, numpy, pandas, matplotlib, and a TeX distribution with latexmk.
 Generated tables and vector evidence charts share one numerical source of truth.
@@ -13,12 +13,14 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
 
-os.environ.setdefault("MPLCONFIGDIR", str(Path(__file__).resolve().parents[1] / "research/generated/.matplotlib"))
-os.environ.setdefault("XDG_CACHE_HOME", str(Path(__file__).resolve().parents[1] / "research/generated/.cache"))
+_CACHE_WORKSPACE = tempfile.TemporaryDirectory(prefix="dsc-publication-cache-")
+os.environ["MPLCONFIGDIR"] = str(Path(_CACHE_WORKSPACE.name) / "matplotlib")
+os.environ["XDG_CACHE_HOME"] = str(Path(_CACHE_WORKSPACE.name) / "cache")
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -84,10 +86,15 @@ def read_csv(folder, name, required):
 
 
 def build(args):
+    with tempfile.TemporaryDirectory(prefix="dsc-publication-") as temporary:
+        return build_in_workspace(args, Path(temporary))
+
+
+def build_in_workspace(args, workspace):
     # A selected posterior run also owns its timing and calibrated priors.
     args.pilot = selected_pilot_summary(args.pilot, args.posterior_run)
     folder = args.data.resolve()
-    generated = ROOT / "research/generated"
+    generated = workspace / "generated"
     figures = generated / "figures"
     figures.mkdir(parents=True, exist_ok=True)
 
@@ -411,6 +418,8 @@ def build(args):
 
     make_pilot(args, write, folder)
     posterior = make_bayesian_paths(args, write, figures, summary)
+    if posterior is None:
+        write("bayesian_paths_all.tex", (generated / "all_pairs.tex").read_text())
     manifest = {"data_dir": str(folder), "pilot": str(args.pilot.resolve()) if args.pilot else None,
                 "posterior_run": str(args.posterior_run.resolve()) if args.posterior_run else None,
                 "n_returns": len(returns), "n_pairs": len(full), "pair_order": expected,
@@ -435,20 +444,43 @@ def build(args):
         manifest["prior_summary_sha256"] = hashlib.sha256(prior_path.read_bytes()).hexdigest()
     write("publication_manifest.json", json.dumps(manifest, indent=2) + "\n")
     if not args.no_compile:
-        output = ROOT / "output/pdf"
-        output.mkdir(parents=True, exist_ok=True)
-        latexmk = shutil.which("latexmk") or "/Library/TeX/texbin/latexmk"
-        env = dict(os.environ)
-        env["PATH"] = str(Path(latexmk).parent) + os.pathsep + env.get("PATH", "")
-        stems = ["weekly_correlation_report"]
-        if args.posterior_run is not None:
-            stems.append("weekly_correlation_paths")
-        if not args.report_only:
-            stems.append("weekly_correlation_slides")
-        for stem in stems:
-            subprocess.run([latexmk, "-pdf", "-interaction=nonstopmode", "-halt-on-error", "-file-line-error",
-                            "-outdir=../output/pdf", stem + ".tex"], cwd=ROOT / "research", env=env, check=True)
-            print(output / (stem + ".pdf"))
+        return compile_publication(workspace, args.run_id)
+
+
+def compile_publication(workspace, run_id):
+    """Compile and check both documents before publishing only their PDFs."""
+    stems = [("weekly_correlation_report", "report"), ("weekly_correlation_paths", "figure")]
+    for stem, _ in stems:
+        shutil.copy2(ROOT / "research" / (stem + ".tex"), workspace / (stem + ".tex"))
+    shutil.copy2(ROOT / "research/references.bib", workspace / "references.bib")
+    build_dir = workspace / "build"
+    build_dir.mkdir()
+    latexmk = shutil.which("latexmk") or "/Library/TeX/texbin/latexmk"
+    env = dict(os.environ)
+    env["PATH"] = str(Path(latexmk).parent) + os.pathsep + env.get("PATH", "")
+    for stem, _ in stems:
+        subprocess.run([latexmk, "-pdf", "-interaction=nonstopmode", "-halt-on-error", "-file-line-error",
+                        "-outdir=" + str(build_dir), stem + ".tex"], cwd=workspace, env=env, check=True)
+        log = (build_dir / (stem + ".log")).read_text(errors="replace")
+        issues = [line for line in log.splitlines()
+                  if re.search(r"Overfull \\[hv]box|undefined|Citation .* undefined", line)]
+        if issues:
+            raise ValueError(f"LaTeX layout/reference issues in {stem}: {issues}")
+    output = ROOT / "report"
+    output.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for stem, label in stems:
+        destination = output / f"{label}_{run_id}.pdf"
+        with tempfile.NamedTemporaryFile(dir=output, suffix=".pdf", delete=False) as handle:
+            temporary_pdf = Path(handle.name)
+        try:
+            shutil.copy2(build_dir / (stem + ".pdf"), temporary_pdf)
+            temporary_pdf.replace(destination)
+        finally:
+            temporary_pdf.unlink(missing_ok=True)
+        paths.append(destination)
+        print(destination)
+    return paths
 
 
 def make_bayesian_paths(args, write, figures, data_summary):
@@ -1042,13 +1074,13 @@ def make_pilot(args, write, folder):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data", type=Path, default=ROOT / "outputs/weekly_research/data")
+    parser.add_argument("--data", type=Path, default=ROOT / "outputs/data")
     parser.add_argument("--results", type=Path, help="Alternative: research output root containing data/")
     parser.add_argument("--pilot", type=Path, help="Saved pilot_summary.json; no estimation is launched")
     parser.add_argument("--posterior-run", type=Path,
                         help="Sampler run containing generated Bayesian correlation-path PDFs")
-    parser.add_argument("--report-only", action="store_true", help="Compile the report but not the Beamer slides")
-    parser.add_argument("--no-compile", action="store_true", help="Regenerate tables/charts only")
+    parser.add_argument("--run-id", required=True, help="Run-folder ID used in the two PDF filenames")
+    parser.add_argument("--no-compile", action="store_true", help="Validate inputs and generate temporary tables/charts only")
     args = parser.parse_args()
     if args.results:
         args.data = args.results / "data"
@@ -1056,4 +1088,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        _CACHE_WORKSPACE.cleanup()

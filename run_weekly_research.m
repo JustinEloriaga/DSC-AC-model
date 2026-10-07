@@ -52,9 +52,8 @@ if strcmp(mode,'pilot')
     if ~inference.estimate_parameters||inference.training_panel.dates(end)~=panel.dates(end)
         error('dsc:PilotMode','Use run_weekly_model_report for saved-parameter smoothing or cutoff estimation.');
     end
-    stamp=char(datetime('now','Format','yyyyMMdd-HHmmss-SSS'));
-    run_dir=fullfile(cfg.output_root,'runs',[stamp '-chain' num2str(cfg.chain_id)]);
-    if ~exist(run_dir,'dir'), mkdir(run_dir); end
+    run_dir=dsc_create_timestamped_directory(fullfile(cfg.output_root,'runs'),'', ...
+        ['-chain' num2str(cfg.chain_id)]);
     write_json(fullfile(run_dir,'run_manifest.json'),manifest);
     result.pilot=run_weekly_pilot(inference.training_panel,priors,cfg,run_dir);
     write_json(fullfile(run_dir,'prior_summary.json'),priors);

@@ -106,7 +106,7 @@ cp=verify_likelihood_rows(testCase,second.paths.checkpoint,extended,17:33);
 verifyEqual(testCase,cp.state.V,loaded_inference.parameters.parameter_estimate.V);
 verifyEqual(testCase,cp.state.sig2h,loaded_inference.parameters.parameter_estimate.sig2h);
 verifyEqual(testCase,cp.state.sig2r,loaded_inference.parameters.parameter_estimate.sig2r);
-verifyEqual(testCase,numel(dir(fullfile(inference.parameter_dir,'dsc_parameters_*.mat'))),1);
+verifyEqual(testCase,numel(dir(fullfile(inference.parameter_dir,'parameters_*.mat'))),1);
 manifest=jsondecode(fileread(fullfile(second.run_dir,'run_manifest.json')));
 verifyEqual(testCase,manifest.inference.parameter_file,first.paths.parameters);
 verifyEqual(testCase,manifest.inference.calibration_weeks,16);
@@ -160,7 +160,7 @@ panel=testCase.TestData.panel;
 [priors,inference]=dsc_prepare_inference(panel,cfg);
 verifyError(testCase,@()dsc_run_inference(panel,priors,cfg, ...
     fullfile(cfg.output_root,'warmup'),inference),'dsc:TooFewParameterDraws');
-verifyEmpty(testCase,dir(fullfile(inference.parameter_dir,'dsc_parameters_*.mat')));
+verifyEmpty(testCase,dir(fullfile(inference.parameter_dir,'parameters_*.mat')));
 end
 
 function testInvalidModeOptions(testCase)
@@ -220,7 +220,7 @@ for c=1:2
     verifyEqual(testCase,cp.state.sig2h,parameters.parameter_estimate.sig2h);
     verifyEqual(testCase,cp.state.sig2r,parameters.parameter_estimate.sig2r);
 end
-verifyEqual(testCase,numel(dir(fullfile(inference.parameter_dir,'dsc_parameters_*.mat'))),1);
+verifyEqual(testCase,numel(dir(fullfile(inference.parameter_dir,'parameters_*.mat'))),1);
 end
 
 function testReportModeContinuesAfterFailedEstimationDiagnostics(testCase)
@@ -267,7 +267,7 @@ verifyTrue(testCase,isfile(loaded_result.paths.result));
 verifyEqual(testCase,loaded_result.inference.estimation_convergence.status,'not_checked');
 verifyEqual(testCase,loaded_result.inference.state_convergence.status,'insufficient_draws');
 stored=load(result.paths.parameters,'parameters'); verifyEqual(testCase,stored.parameters,original);
-verifyEqual(testCase,numel(dir(fullfile(inference.parameter_dir,'dsc_parameters_*.mat'))),1);
+verifyEqual(testCase,numel(dir(fullfile(inference.parameter_dir,'parameters_*.mat'))),1);
 % Conditional draw cycling is reported as not_checked but still completes.
 cfg.parameter_smoothing='draws';
 [loaded_priors,loaded_inference]=dsc_prepare_inference(panel,cfg);
@@ -287,7 +287,7 @@ run_dir=fullfile(cfg.output_root,'unsupported_mode');
 verifyError(testCase,@()dsc_run_inference(panel,priors,cfg,run_dir,inference), ...
     'MATLAB:unrecognizedStringChoice');
 verifyFalse(testCase,isfolder(run_dir));
-verifyEmpty(testCase,dir(fullfile(inference.parameter_dir,'dsc_parameters_*.mat')));
+verifyEmpty(testCase,dir(fullfile(inference.parameter_dir,'parameters_*.mat')));
 end
 
 function testPublicEntryRejectsRemovedModeBeforeDataAccess(testCase)

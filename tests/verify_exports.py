@@ -97,7 +97,7 @@ def verify(folder):
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--data',type=Path,default=ROOT/'outputs/weekly_research/data')
+    parser.add_argument('--data',type=Path,default=ROOT/'outputs/data')
     parser.add_argument('--json',type=Path,help='Optional destination for verification evidence')
     args=parser.parse_args()
     result=verify(args.data)
