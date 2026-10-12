@@ -2,10 +2,17 @@ function info=dsc_sampler_signature(backend)
 % Refuse to resume with a different numerical implementation or native binary.
 folder=fileparts(mfilename('fullpath'));
 names={'dsc_sample.m','dsc_sampler_signature.m','dsc_corr_matrix.m', ...
-    'dsc_random_walk_draw.m','dsc_volatility_likelihood.m'};
+    'dsc_corr_matrix_new.m','dsc_random_walk_draw.m','dsc_volatility_likelihood.m'};
 mean_backend='matlab';
-if strcmp(backend,'mex')
-    names=[names,{'dsc_corr_batch_mex.cpp',['dsc_corr_batch_mex.' mexext]}];
+if strcmp(backend,'mex')||strcmp(backend,'mex_new')
+    if strcmp(backend,'mex_new')
+        corr_source='dsc_corr_batch_mex_new.cpp';
+        corr_binary=['dsc_corr_batch_mex_new.' mexext];
+    else
+        corr_source='dsc_corr_batch_mex.cpp';
+        corr_binary=['dsc_corr_batch_mex.' mexext];
+    end
+    names=[names,{corr_source,corr_binary}];
     if exist('dsc_mean_mex','file')==3
         mean_backend='mex';
         names=[names,{'dsc_mean_mex.cpp',['dsc_mean_mex.' mexext]}];

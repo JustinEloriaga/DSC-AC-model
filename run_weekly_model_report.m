@@ -22,7 +22,7 @@ arguments
     options.RhatThreshold (1,1) double {mustBeGreaterThan(options.RhatThreshold,1),mustBeFinite} = 1.01
     options.MinESS (1,1) double {mustBePositive,mustBeFinite} = 400
     options.MaxMCSERatio (1,1) double {mustBePositive,mustBeFinite} = 0.05
-    options.CorrelationBackend (1,1) string {mustBeMember(options.CorrelationBackend,["auto","mex","matlab"])} = "mex"
+    options.CorrelationBackend (1,1) string {mustBeMember(options.CorrelationBackend,["auto","mex","matlab","matlab_new","mex_new"])} = "mex"
     options.CorrelationThreads = "auto"
     options.SourceFile (1,1) string = ""
     options.VariableNames (1,:) string = "all"

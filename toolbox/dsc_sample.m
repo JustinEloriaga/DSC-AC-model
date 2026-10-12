@@ -62,7 +62,7 @@ if ~isscalar(cfg.correlation_threads)||~isfinite(cfg.correlation_threads)|| ...
         cfg.correlation_threads<1||cfg.correlation_threads>64||cfg.correlation_threads~=floor(cfg.correlation_threads)
     error('dsc:SamplerConfig','Correlation thread count must be an integer from 1 to 64.');
 end
-cfg.correlation_backend=validatestring(cfg.correlation_backend,{'auto','matlab','mex'});
+cfg.correlation_backend=validatestring(cfg.correlation_backend,{'auto','matlab','mex','matlab_new','mex_new'});
 if strcmp(cfg.correlation_backend,'auto')
     if exist('dsc_corr_batch_mex','file')==3
         cfg.correlation_backend='mex';
@@ -72,6 +72,9 @@ if strcmp(cfg.correlation_backend,'auto')
 end
 if strcmp(cfg.correlation_backend,'mex')&&exist('dsc_corr_batch_mex','file')~=3
     error('dsc:MissingKernel','Run build_dsc_mex before selecting the MEX backend.');
+end
+if strcmp(cfg.correlation_backend,'mex_new')&&exist('dsc_corr_batch_mex_new','file')~=3
+    error('dsc:MissingKernel','Run build_dsc_mex before selecting the new MEX backend.');
 end
 implementation=dsc_sampler_signature(cfg.correlation_backend);
 if cfg.burnin<0||cfg.thin<1||cfg.chunk_size<1||cfg.max_iterations<1||cfg.max_seconds<=0
@@ -167,7 +170,7 @@ while completed<cfg.max_iterations&&~(isfield(cfg,'resume_finalize_only')&&cfg.r
         if ~cfg.estimate_parameters && strcmp(cfg.parameter_smoothing,'draws')
             state=apply_parameter_draw(state,cfg.fixed_parameter_draws,completed+1);
         end
-        if strcmp(cfg.correlation_backend,'mex')&&exist('dsc_mean_mex','file')==3
+        if (strcmp(cfg.correlation_backend,'mex')||strcmp(cfg.correlation_backend,'mex_new'))&&exist('dsc_mean_mex','file')==3
             state.B=dsc_mean_mex(Y,state.h,cache.P,mask,state.V, ...
                 priors.Bbar,4*priors.VBbar,randn(m,T));
             check_time();
@@ -476,9 +479,13 @@ end
 
 function cache=build_cache(r,obs,m,backend,mask,threads,check)
 T=size(r,1); cache.P=zeros(m,m,T); cache.L=cell(T,1); cache.logdet=zeros(T,1); x=[];
-if strcmp(backend,'mex')
+if strcmp(backend,'mex')||strcmp(backend,'mex_new')
     check();
-    [~,cache.P,L,cache.logdet]=dsc_corr_batch_mex(r,zeros(T,m),mask,threads);
+    if strcmp(backend,'mex_new')
+        [~,cache.P,L,cache.logdet]=dsc_corr_batch_mex_new(r,zeros(T,m),mask,threads);
+    else
+        [~,cache.P,L,cache.logdet]=dsc_corr_batch_mex(r,zeros(T,m),mask,threads);
+    end
     check();
     for t=1:T
         n=numel(obs{t}); cache.L{t}=L(1:n,1:n,t);
@@ -487,7 +494,12 @@ if strcmp(backend,'mex')
 end
 for t=1:T
     if mod(t,16)==1, check(); end
-    [C,~,x]=dsc_corr_matrix(r(t,:),x); cache.P(:,:,t)=C;
+    if strcmp(backend,'matlab_new')
+        [C,~,x]=dsc_corr_matrix_new(r(t,:),x);
+    else
+        [C,~,x]=dsc_corr_matrix(r(t,:),x);
+    end
+    cache.P(:,:,t)=C;
     ix=obs{t}; cache.L{t}=chol(C(ix,ix),'lower');
     cache.logdet(t)=2*sum(log(diag(cache.L{t})));
 end
@@ -520,12 +532,23 @@ end
 function ll=correlation_likelihood(candidate,j,r,Z,constant,obs,m,backend,mask,threads,check)
 r(:,j)=candidate; ll=0; x=[];
 try
-    if strcmp(backend,'mex')
-        check(); ll=dsc_corr_batch_mex(r,Z,mask,threads)+constant; check();
+    if strcmp(backend,'mex')||strcmp(backend,'mex_new')
+        check();
+        if strcmp(backend,'mex_new')
+            ll=dsc_corr_batch_mex_new(r,Z,mask,threads)+constant;
+        else
+            ll=dsc_corr_batch_mex(r,Z,mask,threads)+constant;
+        end
+        check();
     else
         for t=1:size(Z,1)
             if mod(t,16)==1, check(); end
-            [C,~,x]=dsc_corr_matrix(r(t,:),x); ix=obs{t};
+            if strcmp(backend,'matlab_new')
+                [C,~,x]=dsc_corr_matrix_new(r(t,:),x);
+            else
+                [C,~,x]=dsc_corr_matrix(r(t,:),x);
+            end
+            ix=obs{t};
             if isempty(ix), continue; end
             L=chol(C(ix,ix),'lower'); u=L\Z(t,ix)';
             ll=ll-.5*(2*sum(log(diag(L)))+u'*u);

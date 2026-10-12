@@ -5,11 +5,13 @@ function build_info = build_dsc_mex()
 % MATLAB's compiler detector requires a full Xcode installation.
 % This helper does not change sampler defaults or compiler preferences.
 % After building, add toolbox to the MATLAB path to call
-% [ll,P,L,logdet,iterations] = dsc_corr_batch_mex(r,Z,mask,threads).
+% [ll,P,L,logdet,iterations] = dsc_corr_batch_mex(r,Z,mask,threads)
+% or dsc_corr_batch_mex_new(r,Z,mask,threads).
 % threads is optional (default 1); native date workers are limited to 64.
 root = fileparts(fileparts(mfilename('fullpath')));
 target_dir = fullfile(root,'toolbox');
 source = fullfile(target_dir,'dsc_corr_batch_mex.cpp');
+new_source = fullfile(target_dir,'dsc_corr_batch_mex_new.cpp');
 mean_source = fullfile(target_dir,'dsc_mean_mex.cpp');
 compiler = mex.getCompilerConfigurations('C++','Selected');
 use_command_line_tools = isempty(compiler) && ismac;
@@ -22,11 +24,13 @@ fprintf('DSC correlation MEX build: MATLAB %s (%s), %s\n', ...
 fprintf('Source: %s\nOutput: %s\n',source,target_dir);
 fprintf('Libraries: MATLAB bundled mwlapack and mwblas; optional std::thread workers, no OpenMP.\n');
 started = tic;
-clear dsc_corr_batch_mex dsc_mean_mex
+clear dsc_corr_batch_mex dsc_corr_batch_mex_new dsc_mean_mex
 artifact = fullfile(target_dir,['dsc_corr_batch_mex.' mexext]);
+new_artifact = fullfile(target_dir,['dsc_corr_batch_mex_new.' mexext]);
 mean_artifact = fullfile(target_dir,['dsc_mean_mex.' mexext]);
 if use_command_line_tools
     [compiler_name,compiler_version] = build_with_command_line_tools(source,artifact);
+    build_with_command_line_tools(new_source,new_artifact);
     build_with_command_line_tools(mean_source,mean_artifact);
     build_method = 'Apple Command Line Tools (direct compiler invocation)';
 else
@@ -39,18 +43,21 @@ else
     end
     mex('-R2018a','-O','-v',threading_flags{:},source,'-lmwlapack','-lmwblas', ...
         '-outdir',target_dir,'-output','dsc_corr_batch_mex');
+    mex('-R2018a','-O','-v',threading_flags{:},new_source,'-lmwlapack','-lmwblas', ...
+        '-outdir',target_dir,'-output','dsc_corr_batch_mex_new');
     mex('-R2018a','-O','-v',threading_flags{:},mean_source,'-lmwlapack','-lmwblas', ...
         '-outdir',target_dir,'-output','dsc_mean_mex');
     build_method = 'MATLAB mex';
 end
 build_info = struct('artifact',artifact,'source',source, ...
+    'new_artifact',new_artifact,'new_source',new_source, ...
     'mean_artifact',mean_artifact,'mean_source',mean_source, ...
     'matlab_version',version,'matlab_release',version('-release'), ...
     'architecture',computer('arch'),'compiler_name',compiler_name, ...
     'compiler_version',compiler_version,'build_method',build_method,'seconds',toc(started), ...
     'libraries',{{'mwlapack','mwblas'}},'openmp',false, ...
     'native_threads_default',1,'native_threads_limit',64);
-fprintf('Built %s and %s in %.2f seconds.\n',artifact,mean_artifact,build_info.seconds);
+fprintf('Built %s, %s and %s in %.2f seconds.\n',artifact,new_artifact,mean_artifact,build_info.seconds);
 end
 
 function [name,compiler_version] = build_with_command_line_tools(source,artifact)

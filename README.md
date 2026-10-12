@@ -17,14 +17,16 @@ Choose the configured C++ compiler when MATLAB asks. If MATLAB cannot find a
 compiler, install Apple's Command Line Tools in Terminal with
 `xcode-select --install`, restart MATLAB, and run the commands again. The
 builder detects whether MATLAB is running on Apple Silicon or Intel and creates
-the two matching files in `toolbox/`:
+the matching files in `toolbox/`:
 
     dsc_corr_batch_mex.<mex extension>
+    dsc_corr_batch_mex_new.<mex extension>
     dsc_mean_mex.<mex extension>
 
 Verify the build with:
 
     assert(exist("dsc_corr_batch_mex","file") == 3);
+    assert(exist("dsc_corr_batch_mex_new","file") == 3);
     assert(exist("dsc_mean_mex","file") == 3);
 
 This compilation is computer-specific. If the repository is copied to another
@@ -67,7 +69,11 @@ figures.
     SourceFile             Input CSV. DEFAULT: configured Model 1 CSV.
     VariableNames          Tickers to estimate. DEFAULT: "all".
     ParameterSmoothing     "draws" or "mean". MODEL 1 DEFAULT: "draws".
-    CorrelationBackend     "mex" or "matlab". DEFAULT: "mex".
+    CorrelationBackend     "mex", "matlab", "mex_new", or "matlab_new".
+                            DEFAULT: "mex". The *_new backends use the
+                            analytic log-diagonal Newton solver while preserving
+                            the existing model and coordinates. It reuses one
+                            eigensystem per step and a small Cholesky solve.
     CorrelationThreads     Threads for correlation calculations. DEFAULT: "auto".
                             "auto" requires RunTests=true. If RunTests=false,
                             MATLAB writes a warning and enables RunTests.
@@ -87,6 +93,45 @@ Short test:
         WarmupIterations=10, RetainedDraws=100, NumChains=1, ...
         MaxHours=1, BuildReport=false, VerifyReport=false, ...
         VariableNames=["NKYTR Index","SPXT Index","SX5T Index","TUKXG Index"]);
+
+## New correlation solver and timing comparison
+
+`mex_new` and `matlab_new` use the analytic exponential derivative described
+in [Archakov and Hansen's 2026 reference implementation](https://github.com/reinhardhansen/GFT/blob/v1.2.0/src/GFT.jl).
+For the small DSC matrices, they assemble the dense Newton system and solve it
+by Cholesky rather than matrix-free conjugate gradients. An initial phase uses
+the existing AH fixed-point update until the largest log-diagonal residual is
+at most 0.25, then switches once to full Newton steps. Exact trace normalization
+reuses the same eigensystem. There are no finite-difference Jacobians,
+backtracking evaluations, step-size heuristics, or failed-step fallbacks.
+Input validation, finite-value checks, the 200-iteration cap, and the final
+positive-definiteness check follow the old backend's contracts. This lean
+variant does not include the official solver's global-convergence safeguards.
+
+To time the same 100 synthetic 14-variable correlation matrices with both MEX
+backends, without starting estimation or creating output directories:
+
+    addpath("scripts");
+    timings = benchmark_correlation_backends;
+
+The benchmark includes the masked likelihood and all five MEX outputs, tests
+one and four threads, and reports the median of seven alternating timing
+trials. These are times for 100 correlation transformations, not 100 complete
+MCMC iterations. An optional output filename writes JSON into an existing
+directory.
+
+Measured on 2026-10-12 with MATLAB R2024b (Apple Silicon), including masked
+likelihoods and all five outputs:
+
+| Threads | Old MEX | Optimized `mex_new` | Old/new speed ratio |
+| --- | ---: | ---: | ---: |
+| 1 | 18.32 ms | 7.85 ms | 2.33x |
+| 4 | 5.24 ms | 2.40 ms | 2.18x |
+
+The maximum correlation difference was below `6e-9`; 15 kernel regression
+tests and the MATLAB reference round-trip test passed. Full timing trials and
+the prior finite-difference prototype comparison are saved in
+`outputs/correlation_backend_benchmark.json`.
 
 ## Outputs
 

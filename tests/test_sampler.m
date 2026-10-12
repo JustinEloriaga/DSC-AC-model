@@ -33,6 +33,15 @@ verifyTrue(testCase,stats.converged);
 verifyGreaterThan(testCase,min(eig(C)),0);
 end
 
+function testNewCorrelationRoundTrip(testCase)
+X=[1 .4 -.2;.4 1 .1;-.2 .1 1]; A=logm(X);
+[C,stats]=dsc_corr_matrix_new(A(tril(true(3),-1)));
+verifyEqual(testCase,C,X,'AbsTol',1e-7);
+verifyTrue(testCase,stats.converged);
+verifyEqual(testCase,stats.backend,'matlab_new');
+verifyGreaterThan(testCase,min(eig(C)),0);
+end
+
 function testPriorsAndBurninStorage(testCase)
 cfg=testCase.TestData.cfg; folder=tempname; mkdir(folder);
 result=dsc_sample(testCase.TestData.panel,testCase.TestData.priors,cfg,folder);
