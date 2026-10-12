@@ -37,9 +37,22 @@ else
     if isunix && ~ismac
         threading_flags = {'CXXFLAGS=$CXXFLAGS -pthread','LDFLAGS=$LDFLAGS -pthread'};
     end
-    mex('-R2018a','-O','-v',threading_flags{:},source,'-lmwlapack','-lmwblas', ...
+    library_flags = {'-lmwlapack','-lmwblas'};
+    if ispc
+        % Windows mex does not search MATLAB's per-compiler import-library
+        % folders for -l, so pass the LAPACK/BLAS libraries by full path.
+        if startsWith(compiler.ShortName,'mingw','IgnoreCase',true)
+            vendor = 'mingw64';
+        else
+            vendor = 'microsoft';
+        end
+        library_dir = fullfile(matlabroot,'extern','lib',computer('arch'),vendor);
+        library_flags = {fullfile(library_dir,'libmwlapack.lib'), ...
+            fullfile(library_dir,'libmwblas.lib')};
+    end
+    mex('-R2018a','-O','-v',threading_flags{:},source,library_flags{:}, ...
         '-outdir',target_dir,'-output','dsc_corr_batch_mex');
-    mex('-R2018a','-O','-v',threading_flags{:},mean_source,'-lmwlapack','-lmwblas', ...
+    mex('-R2018a','-O','-v',threading_flags{:},mean_source,library_flags{:}, ...
         '-outdir',target_dir,'-output','dsc_mean_mex');
     build_method = 'MATLAB mex';
 end

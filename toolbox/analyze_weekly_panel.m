@@ -183,6 +183,12 @@ summary.excluded_final_raw_rows=panel.excluded_final_rows;
 summary.stationarity_data='complete as-of marks, including flagged closure';
 summary.adf_note='BIC lags 0:13 on common dependent sample; MATLAB p-values bounded [0.001,0.999]';
 summary.kpss_note='Newey-West bandwidths 4,13,26; MATLAB p-values bounded [0.01,0.10]';
+if hasEconometrics()
+    summary.stationarity_implementation='MATLAB Econometrics Toolbox';
+else
+    summary.stationarity_implementation=['Built-in fallback (no Econometrics Toolbox): ' ...
+        'ADF p-values from MacKinnon (1994), KPSS p-values from Kwiatkowski et al. (1992) Table 1'];
+end
 summary.mean_stationarity_note='Mean/unit-root diagnostics do not establish constant variance or invariant dynamic coefficients.';
 summary.rolling_note='Trailing complete pair-windows only; no centered windows or future observations.';
 summary.ages=struct('days',unique(panel.age_days(:))', ...
@@ -239,9 +245,8 @@ for j=1:m
             common=y(maxLag-lag+1:end);
             lastwarn('');
             try
-                [hh(lag+1),pp(lag+1),ss(lag+1),~,reg]= ...
-                    adftest(common,'Model',models(v),'Lags',lag,'Alpha',0.05);
-                bic(lag+1)=reg.BIC; nn(lag+1)=reg.size;
+                [hh(lag+1),pp(lag+1),ss(lag+1),bic(lag+1),nn(lag+1)]= ...
+                    adfTest(common,models(v),lag);
             catch ME
                 hh(lag+1)=false; pp(lag+1)=NaN; ss(lag+1)=NaN;
                 bic(lag+1)=Inf; nn(lag+1)=numel(common);
@@ -250,7 +255,7 @@ for j=1:m
                 continue
             end
             [~,warningId(lag+1)]=lastwarn;
-            valid(lag+1)=warningId(lag+1)~="econ:adftest:InvalidStatistic";
+            valid(lag+1)=warningId(lag+1)~="econ:adftest:InvalidStatistic" && isfinite(ss(lag+1));
         end
         if all(~isfinite(bic))
             chosen=1; bestBIC=NaN;
@@ -271,7 +276,7 @@ for j=1:m
         trend=models(v)=="TS";
         for bandwidth=[4,13,26]
             try
-                [h,p,stat]=kpsstest(y,'Trend',trend,'Lags',bandwidth,'Alpha',0.05);
+                [h,p,stat]=kpssTest(y,trend,bandwidth);
             catch
                 h=false; p=NaN; stat=NaN;
             end
@@ -282,9 +287,9 @@ for j=1:m
         end
     end
     y=panel.returns(:,j); residual=y-mean(y);
-    [h1,p1,s1]=lbqtest(y,'Lags',13,'Alpha',0.05);
-    [h2,p2,s2]=lbqtest(residual.^2,'Lags',13,'Alpha',0.05);
-    [h3,p3,s3]=archtest(residual,'Lags',13,'Alpha',0.05);
+    [h1,s1]=ljungBoxTest(y,13);
+    [h2,s2]=ljungBoxTest(residual.^2,13);
+    [h3,s3]=archTest(residual,13);
     names=["LjungBoxReturns","LjungBoxSquaredReturns","ARCH"];
     hs=[h1,h2,h3]; stats=[s1,s2,s3];
     % Evaluate the chi-square survival function directly: 1-CDF loses tiny
@@ -319,4 +324,84 @@ elseif p>=upper
 else
     label="interpolated";
 end
+end
+
+% The tests below call the Econometrics Toolbox when it is installed and
+% licensed. Otherwise they use the same published statistics directly.
+function tf=hasEconometrics()
+tf=exist('adftest','file')~=0 && license('test','Econometrics_Toolbox');
+end
+
+function [h,p,stat,bic,n]=adfTest(y,model,lag)
+% Dickey-Fuller t statistic on y(t-1), with lag differenced terms.
+if hasEconometrics()
+    [h,p,stat,~,reg]=adftest(y,'Model',model,'Lags',lag,'Alpha',0.05);
+    bic=reg.BIC; n=reg.size; return
+end
+dy=diff(y); n=numel(dy)-lag;
+X=[y(lag+1:end-1),ones(n,1)];
+if model=="TS", X=[X,(1:n)']; end
+for i=1:lag, X=[X,dy(lag+1-i:end-i)]; end %#ok<AGROW>
+[Q,R]=qr(X,0); dependent=dy(lag+1:end);
+b=R\(Q'*dependent); e=dependent-X*b; ssr=e'*e; k=size(X,2);
+Rinv=R\eye(k);
+stat=b(1)/sqrt(ssr/(n-k)*sum(Rinv(1,:).^2));
+bic=n*(log(2*pi)+log(ssr/n)+1)+k*log(n);
+p=mackinnonP(stat,model); h=p<0.05;
+end
+
+function p=mackinnonP(stat,model)
+% MacKinnon (1994) asymptotic p-value for one series, bounded like adftest.
+switch model
+    case "ARD"
+        limits=[-18.83,-1.61,2.74]; small=[2.1659,1.4412,0.038269];
+        large=[1.7339,0.93202,-0.12745,-0.010368];
+    case "TS"
+        limits=[-16.18,-2.89,0.7]; small=[3.2512,1.6047,0.049588];
+        large=[2.5261,0.61654,-0.37956,-0.060285];
+    otherwise
+        error('weekly:ADFModel','Unsupported ADF model %s.',model);
+end
+if stat<=limits(2), c=small; else, c=large; end
+p=0.5*erfc(-polyval(fliplr(c),stat)/sqrt(2));
+if stat<limits(1), p=0; elseif stat>limits(3), p=1; end
+p=min(max(p,0.001),0.999);
+end
+
+function [h,p,stat]=kpssTest(y,trend,lags)
+% KPSS statistic with Bartlett-weighted (Newey-West) long-run variance.
+if hasEconometrics()
+    [h,p,stat]=kpsstest(y,'Trend',trend,'Lags',lags,'Alpha',0.05); return
+end
+n=numel(y); X=ones(n,1);
+if trend, X=[X,(1:n)']; end
+e=y-X*(X\y); s2=e'*e;
+for i=1:lags, s2=s2+2*(1-i/(lags+1))*(e(i+1:n)'*e(1:n-i)); end
+stat=sum(cumsum(e).^2)/n^2/(s2/n);
+if trend, critical=[0.119,0.146,0.176,0.216]; else, critical=[0.347,0.463,0.574,0.739]; end
+p=interp1(critical,[0.10,0.05,0.025,0.01],min(max(stat,critical(1)),critical(end)));
+h=p<0.05;
+end
+
+function [h,stat]=ljungBoxTest(y,lags)
+% Ljung-Box Q statistic on demeaned sample autocorrelations.
+if hasEconometrics()
+    [h,~,stat]=lbqtest(y,'Lags',lags,'Alpha',0.05); return
+end
+x=y-mean(y); n=numel(x); k=(1:lags)';
+r=arrayfun(@(s)x(s+1:n)'*x(1:n-s),k)/(x'*x);
+stat=n*(n+2)*sum(r.^2./(n-k));
+h=gammainc(stat/2,lags/2,'upper')<0.05;
+end
+
+function [h,stat]=archTest(e,lags)
+% Engle's LM statistic: effective sample size times R^2 of e^2 on its lags.
+if hasEconometrics()
+    [h,~,stat]=archtest(e,'Lags',lags,'Alpha',0.05); return
+end
+x=e.^2; n=numel(x)-lags; X=ones(n,1);
+for i=1:lags, X=[X,x(lags+1-i:end-i)]; end %#ok<AGROW>
+y=x(lags+1:end); u=y-X*(X\y);
+stat=n*(1-(u'*u)/sum((y-mean(y)).^2));
+h=gammainc(stat/2,lags/2,'upper')<0.05;
 end

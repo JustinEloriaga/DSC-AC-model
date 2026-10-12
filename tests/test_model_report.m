@@ -11,6 +11,8 @@ prior_warning=warning('off','econ:adftest:InvalidStatistic');
 warning_guard=onCleanup(@()warning(prior_warning)); %#ok<NASGU>
 folder=tempname; mkdir(folder);
 testCase.addTeardown(@()rmdir(folder,'s'));
+% Runs first: Windows cannot delete MEX files still loaded from the copy.
+testCase.addTeardown(@unloadNativeKernels);
 cfg=weekly_config(); header=readlines(cfg.source_file);
 % Run the fixed-output entry point from an isolated repository copy.
 prior_path=path;
@@ -87,4 +89,8 @@ verifyEqual(testCase,latest.inference.parameter_file,result.paths.parameters);
 verifyEqual(testCase,latest.actual_retained_draws_per_chain,2);
 verifyEqual(testCase,latest.run_result.saved_draws_total,2);
 verifyEqual(testCase,latest.run_result.status,loaded.status);
+end
+
+function unloadNativeKernels()
+clear dsc_corr_batch_mex dsc_mean_mex
 end

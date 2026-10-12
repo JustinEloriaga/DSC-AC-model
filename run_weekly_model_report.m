@@ -8,7 +8,7 @@ function result = run_weekly_model_report(options)
 % completed sweeps unless MaxHours stops it first.
 arguments
     options.WarmupIterations (1,1) double {mustBeInteger,mustBeNonnegative} = 10
-    options.RetainedDraws (1,1) double {mustBeInteger,mustBeGreaterThanOrEqual(options.RetainedDraws,2)} = 100
+    options.RetainedDraws (1,1) double {mustBeInteger,mustBeGreaterThanOrEqual(options.RetainedDraws,2)} = 10
     options.Thin (1,1) double {mustBeInteger,mustBePositive} = 1
     options.MaxHours (1,1) double {mustBePositive,mustBeFinite} = 12
     options.ChunkSize (1,1) double {mustBeInteger,mustBePositive} = 1000

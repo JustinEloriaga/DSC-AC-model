@@ -132,7 +132,8 @@ void evaluate(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
 
     auto process_dates = [&](mwSize begin_date, mwSize end_date) {
     const ptrdiff_t n = static_cast<ptrdiff_t>(m);
-    const char vectors = 'V', lower = 'L', no_transpose = 'N', nonunit = 'N';
+    // static: MinGW GCC 6 cannot take the address of a constant captured by a nested lambda.
+    static const char vectors = 'V', lower = 'L', no_transpose = 'N', nonunit = 'N';
     const ptrdiff_t increment = 1;
     ptrdiff_t info = 0;
     std::vector<double> base(mm, 0.0), eigenvectors(mm), eigenvalues(m),
