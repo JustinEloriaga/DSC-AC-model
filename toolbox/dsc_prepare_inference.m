@@ -3,8 +3,22 @@ function [priors,inference] = dsc_prepare_inference(panel,cfg)
 % No sampler is launched here. Appended observations never recalibrate a
 % loaded model. The first prior_weeks are excluded from every likelihood.
 if ~isfield(cfg,'estimate_parameters'), cfg.estimate_parameters=true; end
+if ~isfield(cfg,'parameter_source'), cfg.parameter_source='posterior'; end
+if ~isfield(cfg,'smooth_states'), cfg.smooth_states=true; end
+cfg.parameter_source=validatestring(cfg.parameter_source,{'posterior','prior'});
+if ~islogical(cfg.smooth_states)||~isscalar(cfg.smooth_states)
+    error('dsc:InferenceConfig','smooth_states must be a scalar logical.');
+end
+prior_parameters=strcmp(cfg.parameter_source,'prior');
+if prior_parameters, cfg.estimate_parameters=false; end
 if ~islogical(cfg.estimate_parameters)||~isscalar(cfg.estimate_parameters)
     error('dsc:InferenceConfig','estimate_parameters must be a scalar logical.');
+end
+if ~cfg.smooth_states&&(~cfg.estimate_parameters||prior_parameters)
+    error('dsc:InferenceConfig','Estimation-only requires posterior parameter estimation.');
+end
+if prior_parameters&&isfield(cfg,'auto_extend')&&cfg.auto_extend
+    error('dsc:InferenceConfig','Prior-parameter smoothing requires equal fixed retained quotas; AutoExtend must be false.');
 end
 if ~isfield(cfg,'estimation_end_date'), cfg.estimation_end_date=''; end
 if ~isfield(cfg,'parameter_dir')||strlength(string(cfg.parameter_dir))==0
@@ -16,17 +30,18 @@ if ~isfield(cfg,'parameter_smoothing')||strlength(string(cfg.parameter_smoothing
 end
 cfg.parameter_smoothing=validatestring(cfg.parameter_smoothing,{'draws','mean'});
 inference=struct('estimate_parameters',cfg.estimate_parameters, ...
+    'parameter_source',cfg.parameter_source,'smooth_states',cfg.smooth_states, ...
     'parameter_dir',char(cfg.parameter_dir),'parameters',[],'training_panel',[], ...
     'calibration_panel',[],'smoothing_panel',[], ...
     'parameter_smoothing',char(cfg.parameter_smoothing));
-if cfg.estimate_parameters
+if cfg.estimate_parameters||prior_parameters
     if ~isfield(cfg,'prior_weeks')||~isscalar(cfg.prior_weeks)|| ...
             ~isfinite(cfg.prior_weeks)||cfg.prior_weeks<1||cfg.prior_weeks~=floor(cfg.prior_weeks)
         error('dsc:InferenceConfig','prior_weeks must be a positive integer.');
     end
     excluded=cfg.prior_weeks;
     if strlength(string(cfg.parameter_file))>0
-        error('dsc:InferenceConfig','parameter_file applies only when estimate_parameters=false.');
+        error('dsc:InferenceConfig','parameter_file applies only when loading saved posterior parameters.');
     end
     last=numel(panel.dates);
     if strlength(string(cfg.estimation_end_date))>0

@@ -46,6 +46,12 @@ manifest.inference=struct('estimate_parameters',inference.estimate_parameters, .
     'calibration_weeks',inference.calibration_weeks, ...
     'model_start',char(string(inference.smoothing_panel.dates(1),'yyyy-MM-dd')), ...
     'state_scope','historical smoothing after the reserved initial calibration weeks');
+manifest.inference.parameter_source=inference.parameter_source;
+manifest.inference.smooth_states=inference.smooth_states;
+if strcmp(inference.parameter_source,'prior')
+    manifest.inference.prior_calibration_end=inference.estimation_end;
+    manifest.inference.parameter_estimation_end='';
+end
 manifest.production_authorized=false;
 result=struct('panel',panel,'summary',summary,'priors',priors,'manifest',manifest,'inference',inference);
 if strcmp(mode,'pilot')

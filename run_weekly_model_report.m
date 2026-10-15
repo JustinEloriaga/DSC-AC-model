@@ -27,6 +27,9 @@ arguments
     options.SourceFile (1,1) string = ""
     options.VariableNames (1,:) string = "all"
     options.EstimateParameters (1,1) logical = true
+    options.ParameterSource (1,1) string {mustBeMember(options.ParameterSource,["posterior","prior"])} = "posterior"
+    options.SmoothStates (1,1) logical = true
+    options.PriorParameterDraws (1,1) double {mustBeInteger,mustBePositive} = 10
     options.EstimationEndDate (1,1) string = ""
     options.KeepNewestParameterFiles (1,1) double {mustBeInteger,mustBeNonnegative} = 3
     options.ParameterSmoothing (1,1) string {mustBeMember(options.ParameterSmoothing,["draws","mean"])} = "mean"
@@ -38,6 +41,16 @@ end
 
 if options.VerifyReport && ~options.BuildReport
     error('DSC:PipelineOptions','VerifyReport requires BuildReport=true.');
+end
+if ~options.SmoothStates&&(~options.EstimateParameters||options.ParameterSource=="prior")
+    error('DSC:PipelineOptions','SmoothStates=false requires posterior parameter estimation.');
+end
+if options.ParameterSource=="prior"&&options.AutoExtend
+    error('DSC:PipelineOptions','Prior-parameter smoothing requires equal retained quotas; AutoExtend must be false.');
+end
+if options.BuildReport&&(options.ParameterSource=="prior"||~options.SmoothStates)
+    error('DSC:PipelineOptions', ...
+        'The posterior publication report requires posterior estimation/smoothing. Use BuildReport=false for prior-parameter or estimation-only runs.');
 end
 if isstring(options.CorrelationThreads) || ischar(options.CorrelationThreads)
     thread_text=string(options.CorrelationThreads);
@@ -87,14 +100,20 @@ cfg.resume = false;
 cfg.correlation_backend = char(options.CorrelationBackend);
 cfg.correlation_threads = options.CorrelationThreads;
 cfg.estimate_parameters = options.EstimateParameters;
+cfg.parameter_source = char(options.ParameterSource);
+cfg.smooth_states = options.SmoothStates;
+cfg.prior_parameter_draws = options.PriorParameterDraws;
+if options.ParameterSource=="prior", cfg.estimate_parameters=false; end
 cfg.estimation_end_date = char(options.EstimationEndDate);
 cfg.parameter_dir = fullfile(cfg.output_root,'parameters');
 cfg.parameter_file = '';
 cfg.parameter_smoothing = char(options.ParameterSmoothing);
 cfg.write_publication_exports = options.BuildReport;
 cfg.keep_newest_parameter_files = options.KeepNewestParameterFiles;
-parameter_cleanup = onCleanup(@()delete_old_parameter_files( ...
-    cfg.parameter_dir,cfg.keep_newest_parameter_files)); %#ok<NASGU>
+if options.ParameterSource~="prior"
+    parameter_cleanup = onCleanup(@()delete_old_parameter_files( ...
+        cfg.parameter_dir,cfg.keep_newest_parameter_files)); %#ok<NASGU>
+end
 cfg.data_output_dir = dsc_create_timestamped_directory( ...
     fullfile(cfg.output_root,'data'),'run-',['-chain' num2str(cfg.chain_id)]);
 data_workspace_cleanup = onCleanup(@()delete_data_workspace(cfg.data_output_dir)); %#ok<NASGU>
@@ -121,7 +140,9 @@ marker_fid=fopen(run_marker,'w');
 if marker_fid<0, error('DSC:RunMarker','Cannot mark active run: %s',run_dir); end
 fclose(marker_fid);
 run_marker_cleanup=onCleanup(@()delete_file_if_present(run_marker)); %#ok<NASGU>
-intermediate_cleanup = onCleanup(@()delete_intermediate_run_files(run_dir)); %#ok<NASGU>
+if options.ParameterSource=="posterior"&&options.SmoothStates
+    intermediate_cleanup = onCleanup(@()delete_intermediate_run_files(run_dir)); %#ok<NASGU>
+end
 run_manifest = analysis.manifest;
 run_manifest.run_kind = 'configurable sampler and report pipeline';
 run_manifest.requested_warmup_iterations = options.WarmupIterations;
@@ -129,6 +150,12 @@ run_manifest.requested_retained_draws = options.RetainedDraws; % legacy alias: p
 run_manifest.requested_retained_draws_per_chain = options.RetainedDraws;
 run_manifest.requested_total_sweeps = cfg.max_iterations;
 run_manifest.requested_num_chains = cfg.num_chains;
+run_manifest.parameter_source = cfg.parameter_source;
+run_manifest.smooth_states = cfg.smooth_states;
+if strcmp(cfg.parameter_source,'prior')
+    run_manifest.requested_prior_parameter_draws = cfg.prior_parameter_draws;
+    run_manifest.requested_num_conditional_chains = cfg.num_chains*cfg.prior_parameter_draws;
+end
 run_manifest.parallel_chains = cfg.parallel_chains;
 run_manifest.convergence_mode = cfg.convergence_mode;
 run_manifest.requested_max_hours = options.MaxHours;
@@ -136,6 +163,11 @@ run_manifest.convergence_established = false;
 write_json_local(fullfile(run_dir,'run_manifest.json'),run_manifest);
 
 result = dsc_run_inference(analysis.panel,analysis.priors,cfg,run_dir,analysis.inference);
+if options.ParameterSource=="prior"&&~result.prior_sampling.mixture_complete
+    error('DSC:IncompletePriorMixture', ...
+        ['Prior-parameter smoothing is incomplete at %s (%s). All parameter components must reach equal retained quotas before plotting; partial work was preserved.'], ...
+        run_dir,result.reason);
+end
 if result.saved_draws < 2
     error('DSC:TooFewRetainedDraws', ...
         ['The run was preserved at %s, but it retained only %d draw(s). ' ...
@@ -147,8 +179,18 @@ if any(result.saved_draws_per_chain < options.RetainedDraws)
         options.RetainedDraws,result.saved_draws);
 end
 
-result.figure_paths = plot_bayes_correlation_paths(run_dir);
-result.convergence_artifacts = write_convergence_artifacts(run_dir,result);
+result.figure_paths = strings(0,1);
+if options.SmoothStates
+    result.figure_paths = plot_bayes_correlation_paths(run_dir);
+end
+if options.ParameterSource=="prior"
+    result.convergence_artifacts = result.prior_sampling.conditional_convergence;
+elseif ~options.SmoothStates
+    result.convergence_artifacts = struct('directory',fullfile(run_dir,'convergence'), ...
+        'json',result.paths.convergence);
+else
+    result.convergence_artifacts = write_convergence_artifacts(run_dir,result);
+end
 result.report_pdf = '';
 result.figure_pdf = '';
 result.publication_checked = false;
@@ -188,7 +230,11 @@ latest = struct('run_dir',run_dir,'summary',fullfile(cfg.output_root,'latest_mod
 latest.inference=result.inference;
 latest.convergence_artifacts=result.convergence_artifacts;
 latest.manifest=run_manifest;
-latest.num_chains=cfg.num_chains;
+latest.num_chains=result.num_chains;
+if options.ParameterSource=="prior"
+    latest.conditional_chains_per_parameter=cfg.num_chains;
+    latest.prior_parameter_draws=cfg.prior_parameter_draws;
+end
 latest.actual_retained_draws_per_chain=result.saved_draws_per_chain;
 latest.convergence=result.convergence;
 latest.run_result=struct('status',result.status,'reason',result.reason, ...
@@ -200,7 +246,9 @@ latest.run_result=struct('status',result.status,'reason',result.reason, ...
     'total_seconds',result.total_seconds,'stage_seconds',result.stage_seconds);
 write_json_local(fullfile(cfg.output_root,'latest_model_report.json'),latest);
 delete_file_if_present(run_marker);
-dsc_prune_outputs(cfg.output_root,fullfile(root,'report'),run_dir);
+if options.ParameterSource=="posterior"
+    dsc_prune_outputs(cfg.output_root,fullfile(root,'report'),run_dir);
+end
 end
 
 function delete_file_if_present(path)

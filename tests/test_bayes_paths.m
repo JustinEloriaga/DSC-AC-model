@@ -4,7 +4,7 @@ end
 
 function setupOnce(testCase)
 root=fileparts(fileparts(mfilename('fullpath')));
-addpath(fullfile(root,'scripts'));
+addpath(fullfile(root,'scripts'),fullfile(root,'toolbox'));
 testCase.TestData.root=root;
 end
 
@@ -163,6 +163,127 @@ summary=jsondecode(fileread(path)); summary.convergence_established=true;
 write_fixture(path,summary);
 verifyError(testCase,@()plot_bayes_correlation_paths(testCase.TestData.folder),'DSC:ConvergenceMetadata');
 verifyFalse(testCase,isfolder(fullfile(testCase.TestData.folder,'figures')));
+end
+
+function testPriorConditionalMixturePreservesPriorProvenance(testCase)
+[summary,~,expected]=prior_fixture(testCase);
+paths=plot_bayes_correlation_paths(testCase.TestData.folder);
+verifyTrue(testCase,all(isfile(paths)));
+bands=load(fullfile(testCase.TestData.folder,'posterior_correlation_bands.mat'));
+recorded_metadata=jsondecode(fileread(fullfile(testCase.TestData.folder,'inference_metadata.json')));
+recorded_summary=jsondecode(fileread(fullfile(testCase.TestData.folder,'pilot_summary.json')));
+verifyEqual(testCase,bands.inference,recorded_metadata);
+verifyEqual(testCase,bands.prior_sampling,recorded_summary.prior_sampling);
+verifyEqual(testCase,bands.draw_parameter_ids,[ones(1,6) 2*ones(1,6)]);
+verifyEqual(testCase,bands.draw_chain_ids,repelem(summary.chain_ids,3));
+verifyEqual(testCase,bands.median_path,prctile(expected,50,3));
+verifyFalse(testCase,isfield(bands.inference,'parameters_estimated_at'));
+end
+
+function testIncompletePriorMixtureRejectsBeforeExport(testCase)
+[summary,~,~]=prior_fixture(testCase);
+summary.prior_sampling.mixture_complete=false;
+write_fixture(fullfile(testCase.TestData.folder,'pilot_summary.json'),summary);
+verifyError(testCase,@()plot_bayes_correlation_paths(testCase.TestData.folder),'DSC:InferenceMetadata');
+verifyFalse(testCase,isfile(fullfile(testCase.TestData.folder,'posterior_correlation_bands.mat')));
+verifyFalse(testCase,isfolder(fullfile(testCase.TestData.folder,'figures')));
+end
+
+function testUnequalPriorWeightsRejectBeforeExport(testCase)
+[summary,~,~]=prior_fixture(testCase);
+summary.prior_sampling.mixture_weights=[.4 .6];
+write_fixture(fullfile(testCase.TestData.folder,'pilot_summary.json'),summary);
+verifyError(testCase,@()plot_bayes_correlation_paths(testCase.TestData.folder),'DSC:InferenceMetadata');
+verifyFalse(testCase,isfolder(fullfile(testCase.TestData.folder,'figures')));
+end
+
+function testUnequalCompletedPriorQuotasRejectBeforeExport(testCase)
+[summary,metadata,~]=prior_fixture(testCase);
+path=fullfile(summary.chain_dirs{4},'posterior_chunk_000001.mat');
+loaded=load(path,'chunk'); chunk=loaded.chunk;
+chunk.P_pairs=chunk.P_pairs(:,:,1:2); chunk.iterations=chunk.iterations(1:2);
+save(path,'chunk','-v7');
+summary.saved_draws_per_chain=[3 3 3 2]; summary.saved_draws=11;
+metadata.retained_draws_per_chain=summary.saved_draws_per_chain;
+write_fixture(fullfile(testCase.TestData.folder,'pilot_summary.json'),summary);
+write_fixture(fullfile(testCase.TestData.folder,'inference_metadata.json'),metadata);
+write_fixture(fullfile(testCase.TestData.folder,'run_manifest.json'),struct('source_hash','fixture','inference',metadata));
+verifyError(testCase,@()plot_bayes_correlation_paths(testCase.TestData.folder),'DSC:InferenceMetadata');
+verifyFalse(testCase,isfolder(fullfile(testCase.TestData.folder,'figures')));
+end
+
+function testPriorGroupIdentityRejectsBeforeExport(testCase)
+[summary,~,~]=prior_fixture(testCase);
+summary.prior_sampling.parameter_draw_ids_per_chain=[1 2 1 2];
+write_fixture(fullfile(testCase.TestData.folder,'pilot_summary.json'),summary);
+verifyError(testCase,@()plot_bayes_correlation_paths(testCase.TestData.folder),'DSC:InferenceMetadata');
+end
+
+function testPriorMixtureCannotClaimPooledConvergence(testCase)
+[summary,~,~]=prior_fixture(testCase);
+summary.convergence=struct('status','passed','passed',true);
+summary.convergence_established=true;
+write_fixture(fullfile(testCase.TestData.folder,'pilot_summary.json'),summary);
+verifyError(testCase,@()plot_bayes_correlation_paths(testCase.TestData.folder),'DSC:ConvergenceMetadata');
+end
+
+function testPriorConditionalDiagnosticsPreserveGroupChainIds(testCase)
+[summary,~,~]=prior_fixture(testCase);
+summary.prior_sampling.conditional_convergence(2).chain_ids=[11 12];
+write_fixture(fullfile(testCase.TestData.folder,'pilot_summary.json'),summary);
+verifyError(testCase,@()plot_bayes_correlation_paths(testCase.TestData.folder),'DSC:ConvergenceMetadata');
+end
+
+function testPriorDatesMustMatchActualDrawSample(testCase)
+[~,metadata,~]=prior_fixture(testCase);
+metadata.smoothing_start='2020-01-10';
+write_fixture(fullfile(testCase.TestData.folder,'inference_metadata.json'),metadata);
+write_fixture(fullfile(testCase.TestData.folder,'run_manifest.json'),struct('source_hash','fixture','inference',metadata));
+verifyError(testCase,@()plot_bayes_correlation_paths(testCase.TestData.folder),'DSC:InferenceMetadata');
+end
+
+function testPriorMetadataIsRequired(testCase)
+prior_fixture(testCase);
+delete(fullfile(testCase.TestData.folder,'inference_metadata.json'));
+verifyError(testCase,@()plot_bayes_correlation_paths(testCase.TestData.folder),'DSC:InferenceMetadata');
+end
+
+function [summary,metadata,expected]=prior_fixture(testCase)
+folder=testCase.TestData.folder;
+loaded=load(fullfile(folder,'posterior_chunk_000001.mat'),'chunk');
+base=loaded.chunk; base.P_pairs=base.P_pairs(:,1,:);
+base.tickers=["A","B"]; base.pair_i=2; base.pair_j=1;
+dirs=cell(1,4); ids=[11 12 21 22]; expected=[];
+for c=1:4
+    dirs{c}=fullfile(folder,sprintf('prior_chain_%03d',c)); mkdir(dirs{c});
+    chunk=base; chunk.chain_id=ids(c); chunk.P_pairs=base.P_pairs+.03*c;
+    save(fullfile(dirs{c},'posterior_chunk_000001.mat'),'chunk','-v7');
+    expected=cat(3,expected,chunk.P_pairs);
+end
+reports=repmat(struct('status','not_checked','passed',false,'chains',2, ...
+    'chain_ids',[],'actual_draws_per_chain',[3 3]),1,2);
+reports(1).chain_ids=ids(1:2); reports(2).chain_ids=ids(3:4);
+sampling=struct('requested_parameter_draws',2,'conditional_chains_per_parameter',2, ...
+    'parameter_draw_ids_per_chain',[1 1 2 2],'mixture_complete',true, ...
+    'mixture_weights',[.5 .5],'requested_retained_draws_per_chain',3, ...
+    'conditional_convergence',reports);
+summary=testCase.TestData.summary;
+summary.inference_mode='prior_parameter_smoothing';
+summary.chain_dirs=dirs; summary.chain_ids=ids; summary.saved_draws=12;
+summary.saved_draws_per_chain=[3 3 3 3]; summary.num_chains=4;
+summary.excluded_initial_weeks=104; summary.prior_sampling=sampling;
+summary.convergence=struct('status','not_checked','passed',false);
+metadata=struct('inference_mode','prior_parameter_smoothing','parameter_source','prior', ...
+    'parameter_file','prior_parameter_draws.mat','prior_parameter_file','prior_parameter_draws.mat', ...
+    'parameter_smoothing','prior_draws','parameter_uncertainty_in_bands',true, ...
+    'uncertainty_source','prior_parameter_and_conditional_state','prior_parameter_draws',2, ...
+    'prior_calibration_start','2018-01-05','prior_calibration_end','2020-04-17', ...
+    'calibration_weeks',104,'calibration_start','2018-01-05','calibration_end','2019-12-27', ...
+    'smoothing_start','2020-01-03','smoothing_end','2020-04-17','num_chains',4, ...
+    'retained_draws_per_chain',[3 3 3 3]);
+write_fixture(fullfile(folder,'pilot_summary.json'),summary);
+write_fixture(fullfile(folder,'inference_metadata.json'),metadata);
+write_fixture(fullfile(folder,'run_manifest.json'),struct('source_hash','fixture','inference',metadata));
 end
 
 function [dirs,expected]=multichain_fixture(testCase)

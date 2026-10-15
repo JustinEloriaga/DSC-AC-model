@@ -42,6 +42,57 @@ verifyEqual(testCase,pa.likelihood_start_date,a.dates(17));
 verifyError(testCase,@()dsc_sample(a,pa,cfg,tempname),'dsc:CalibrationOverlap');
 end
 
+function testEstimationOnlySkipsSecondSmoother(testCase)
+cfg=testCase.TestData.cfg; panel=testCase.TestData.panel;
+cfg.output_root=tempname; mkdir(cfg.output_root);
+testCase.addTeardown(@()rmdir(cfg.output_root,'s'));
+cfg.smooth_states=false;
+cfg.estimation_end_date=date_text(panel.dates(24));
+[priors,inference]=dsc_prepare_inference(panel,cfg);
+run_dir=fullfile(cfg.output_root,'estimate-only');
+result=dsc_run_inference(panel,priors,cfg,run_dir,inference);
+verifyEqual(testCase,result.inference_mode,'parameter_estimation');
+verifyEqual(testCase,result.inference.workflow,'estimate_only');
+verifyFalse(testCase,result.inference.smoothing_requested);
+verifyFalse(testCase,result.inference.smoothing_stage_performed);
+verifyEqual(testCase,result.dates,panel.dates(17:24));
+verifyEqual(testCase,result.inference.smoothing_end,date_text(panel.dates(24)));
+verifyFalse(testCase,isfolder(fullfile(run_dir,'estimation')));
+verifyTrue(testCase,isfile(result.paths.parameters));
+saved=load(result.paths.parameters,'parameters');
+verifyEqual(testCase,saved.parameters.retained_draws,result.saved_draws);
+end
+
+function testPriorPreparationSkipsPosteriorLoading(testCase)
+cfg=testCase.TestData.cfg; panel=testCase.TestData.panel;
+cfg.parameter_source='prior'; cfg.estimate_parameters=false;
+cfg.parameter_dir=fullfile(cfg.output_root,'no-posterior-files');
+cfg.estimation_end_date=date_text(panel.dates(24));
+[priors,inference]=dsc_prepare_inference(panel,cfg);
+verifyFalse(testCase,inference.estimate_parameters);
+verifyEqual(testCase,inference.parameter_source,'prior');
+verifyEmpty(testCase,inference.parameters);
+verifyEqual(testCase,inference.smoothing_panel.dates,panel.dates(17:end));
+later=panel; later.returns(25:end,:)=1000*later.returns(25:end,:);
+[other,~]=dsc_prepare_inference(later,cfg);
+verifyEqual(testCase,priors,other);
+verifyFalse(testCase,isfolder(cfg.parameter_dir));
+end
+
+function testUnsupportedWorkflowOptionsRejectEarly(testCase)
+cfg=testCase.TestData.cfg; panel=testCase.TestData.panel;
+cfg.smooth_states=false; cfg.estimate_parameters=false;
+verifyError(testCase,@()dsc_prepare_inference(panel,cfg),'dsc:InferenceConfig');
+cfg.parameter_source='prior'; cfg.estimate_parameters=true;
+verifyError(testCase,@()dsc_prepare_inference(panel,cfg),'dsc:InferenceConfig');
+cfg.smooth_states=true; cfg.auto_extend=true;
+verifyError(testCase,@()dsc_prepare_inference(panel,cfg),'dsc:InferenceConfig');
+verifyError(testCase,@()run_weekly_model_report( ...
+    ParameterSource="prior",SmoothStates=false),'DSC:PipelineOptions');
+verifyError(testCase,@()run_weekly_model_report( ...
+    ParameterSource="prior",BuildReport=true),'DSC:PipelineOptions');
+end
+
 function testEstimateThenExtendWithFrozenParameters(testCase)
 cfg=testCase.TestData.cfg; panel=testCase.TestData.panel;
 cfg.output_root=tempname; mkdir(cfg.output_root);

@@ -1,0 +1,211 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern,microtype,geometry,amsmath,amssymb,booktabs,array,tabularx,xcolor,enumitem,fancyhdr}
+\definecolor{ink}{HTML}{17324D}
+\definecolor{teal}{HTML}{127C80}
+\usepackage[colorlinks=true,urlcolor=teal,linkcolor=teal]{hyperref}
+\geometry{left=22mm,right=22mm,top=23mm,bottom=22mm,headheight=14pt}
+\pagestyle{fancy}\fancyhf{}
+\fancyhead[L]{\small\color{ink} DSC / Inference workflows}
+\fancyhead[R]{\small 15 October 2026}
+\fancyfoot[L]{\scriptsize Algorithm note; no new estimation results}
+\fancyfoot[R]{\small\thepage\ / 3}
+\setlength{\parindent}{0pt}\setlength{\parskip}{6pt}
+\setlength{\emergencystretch}{2em}
+\setlist[enumerate]{leftmargin=*,itemsep=3pt,topsep=3pt}
+\renewcommand{\arraystretch}{1.23}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcommand{\Normal}{\mathcal N}
+\newcommand{\IG}{\operatorname{IG}}
+\newcommand{\IW}{\operatorname{IW}}
+\newcommand{\code}[1]{\texttt{#1}}
+\hypersetup{pdftitle={DSC: Estimation, smoothing and prior parameter sensitivity},pdfauthor={DSC research}}
+\begin{document}
+{\color{ink}\LARGE\bfseries Three ways to run the DSC model\par}
+{\large Estimate parameters, smooth states, or hold parameter weights at the prior\par}
+\medskip
+The new prior option makes sense as a \textbf{prior-sensitivity exercise}: it shows
+the correlation paths supported by the data when parameter sets retain their
+prior weights. It answers a different question from posterior estimation.
+
+\begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{32mm}YY@{}}\toprule
+Mode & Parameters & State paths \\\midrule
+Estimation + smoothing & Learn parameters from returns; by default fix them at posterior means for stage 2. & Smooth using all available modeled returns. \\
+Estimation only & Learn and save posterior parameter draws. & Sample states internally; skip the separate smoother and state figures. \\
+Prior + smoothing & Draw parameter sets from the calibrated prior; keep them fixed. & Run separate conditional smoothers for each set; mix them with equal weights. \\\bottomrule
+\end{tabularx}
+
+\subsection*{What the model separates}
+For weekly returns $y_t$, the latent states are the changing mean $B_t$,
+log variances $h_t$, and correlation coordinates $r_t$. The fixed parameters
+$\theta=(V,\sigma_h^2,\sigma_r^2)$ control how quickly these states move:
+\begin{align*}
+y_t &\sim\Normal(B_t,D_tP_tD_t), &D_t&=\operatorname{diag}\{e^{h_{jt}/2}\},\\
+B_t-B_{t-1}&\sim\Normal(0,V), &
+h_{jt}-h_{j,t-1}&\sim\Normal(0,\sigma_{h,j}^2),\\
+r_{kt}-r_{k,t-1}&\sim\Normal(0,\sigma_{r,k}^2), &
+r_t&=\operatorname{vecl}(\log P_t).
+\end{align*}
+$P_t$ is the actual correlation matrix; $r_t$ is an unrestricted numerical
+coordinate. Smoothing uses future observations relative to a historical week,
+so old paths may revise when the sample grows.
+
+\subsection*{1. Current default: estimation, then conditional smoothing}
+\begin{enumerate}
+\item Reserve the initial 104 weeks for initial-prior calibration and exclude
+them from the likelihood. Use modeled returns through the estimation cutoff.
+\item Run the joint Metropolis-within-Gibbs sampler. A sweep draws $B$ by forward filtering and
+backward simulation; updates $V$ from its inverse-Wishart conditional; updates
+each $r$ path by elliptical slice sampling; then proposes $\sigma_r^2$ from
+inverse-gamma distributions with a Metropolis correction for the initial-state
+density. It updates $h$ and $\sigma_h^2$ in the same way.
+\item Discard warm-up, retain draws, check diagnostics, and save the parameter
+snapshot. The default mean-smoothing option takes posterior means of $\theta$.
+\item Freeze those means and run state-only chains over the full modeled
+history, targeting $p(B,h,r\mid y,\widehat\theta)$. No variance parameters are
+updated in this stage.
+\end{enumerate}
+\textbf{Interpretation.} The default stage-2 bands contain conditional state
+uncertainty; they exclude parameter uncertainty. Each of the two stages has
+its own \code{MaxHours} limit. Diagnostics, not the stopping flag, determine
+whether the saved draws are adequate.
+
+\clearpage
+{\color{ink}\Large\bfseries Estimation only, reuse, and calibration\par}
+\subsection*{2. Estimate and save parameters only}
+Set \code{ParameterSource="posterior"}, \code{EstimateParameters=true}, and
+\code{SmoothStates=false}. Run the same joint sampler described on page 1,
+check its diagnostics, and save the parameter snapshot. Skip the second
+conditional smoother and the state figures.
+
+\textbf{Why are states still sampled?} The conditional updates of $V$,
+$\sigma_h^2$ and $\sigma_r^2$ use changes in $B$, $h$ and $r$. Estimation only
+therefore means ``no separate smoothing/output stage,'' not ``no latent states
+inside estimation.''
+
+\begin{quote}\small\ttfamily
+result = run\_weekly\_model\_report( ...\\
+\hspace*{3mm}ParameterSource="posterior", EstimateParameters=true, ...\\
+\hspace*{3mm}SmoothStates=false, WarmupIterations=100, ...\\
+\hspace*{3mm}RetainedDraws=100, NumChains=4, ParallelChains=true, ...\\
+\hspace*{3mm}CorrelationBackend="mex\_new", MaxHours=12);
+\end{quote}
+Examples show option syntax only; no production run was launched for this note.
+
+\subsection*{Reuse saved posterior parameters}
+Set \code{EstimateParameters=false}, \code{ParameterSource="posterior"},
+and \code{SmoothStates=true}. The code loads the newest compatible parameter
+snapshot and its original prior calibration, then smooths using the available
+history. Appended observations can change past states without re-estimating
+the fixed parameters.
+
+\textbf{The existing \code{ParameterSmoothing="draws"} alternative.}
+If estimation and smoothing use identical dates, the code can use the joint
+estimation draws directly: these target the joint posterior once adequately
+converged. For loaded draws or an extended history, the existing smoother
+cycles through parameter draws between state sweeps. That is a heuristic;
+ordinary common-target chain diagnostics are not reported for it. The new
+prior option on page 3 instead holds each parameter set fixed for an entire
+conditional chain, with its own warm-up.
+
+\subsection*{Where the prior hyperparameters come from}
+The priors are \textbf{empirical Bayes}: some data calibrate them before the
+sampler starts. This remains true in the new prior option.
+
+\begin{tabularx}{\linewidth}{@{}p{36mm}Y@{}}\toprule
+Quantity & Calibration used by the code \\\midrule
+$\bar B$, $\bar V_B$ & Fit an intercept-only OLS mean to complete returns in
+the first 104 weeks. Set $\bar B$ to the sample mean and $\bar V_B=S_0/n_0$,
+where $S_0$ is the covariance with 5\% diagonal shrinkage. \\
+$\bar h$, $\bar r$ & From the same $S_0$: $\bar h=\log\operatorname{diag}(S_0)$;
+standardize $S_0$ to a correlation matrix and take the lower off-diagonal
+entries of its matrix logarithm for $\bar r$. \\
+$V_{0B}$, $\nu_B$ & $\nu_B=n_0$ complete calibration returns and
+$V_{0B}=\bar V_B\nu_B(0.01)^2$. \\
+$a$, $b_h$, $b_r$ & Use 104-week rolling covariance windows through the
+calibration cutoff. Compute changes in rolling log variances and matrix-log
+correlations; take their time-series variances, then the median across
+coordinates within each block. These set blockwise prior means $\mu_h,\mu_r$
+(floored at $10^{-8}$). Set $a=10$ and $b=(a-1)\mu$. \\\bottomrule
+\end{tabularx}
+Here $n_0$ counts complete rows in the reserved window. Initial-state priors
+are $B_1\sim\Normal(\bar B,4\bar V_B)$ independently of $V$ and
+$h_0\mid\sigma_h^2\sim\Normal(\bar h,10\sigma_h^2)$,
+$r_0\mid\sigma_r^2\sim\Normal(\bar r,10\sigma_r^2)$ componentwise.
+Integrating the first random-walk step gives $11\sigma^2$ for the first
+modeled $h$ or $r$ state. The rolling calibration includes later modeled
+returns through the cutoff, so the exercise is not strictly data-free.
+
+\clearpage
+{\color{ink}\Large\bfseries Prior parameter draws + conditional smoothing\par}
+\subsection*{3. The new option and its target}
+Let $X=(B,h,r)$ and let $\pi_{\rm EB}(\theta)$ denote the calibrated parameter
+prior. The new option targets
+\[
+\boxed{q(\theta,X\mid y)=\pi_{\rm EB}(\theta)\,p(X\mid y,\theta).}
+\]
+Returns enter the conditional smoother for $X$. They do not reweight
+$\theta$ by its likelihood. Consequently $q$ is \textbf{not the joint
+posterior} $p(\theta,X\mid y)$, and it is \textbf{not a prior-predictive
+simulation}, which would generate new data instead of smoothing the observed
+returns.
+
+\begin{enumerate}
+\item Draw $K=\code{PriorParameterDraws}$ independent parameter sets:
+\[
+V^{(k)}\sim\IW(V_{0B},\nu_B),\quad
+\sigma_{h,j}^{2(k)}\sim\IG(a,b_h),\quad
+\sigma_{r,l}^{2(k)}\sim\IG(a,b_r).
+\]
+The blocks and scalar variance draws are mutually independent.
+\item For each $k$, freeze $\theta^{(k)}$ and start
+$C=\code{NumChains}$ conditional state chains. Each chain warms up separately,
+then retains $R=\code{RetainedDraws}$ states from
+$p(X\mid y,\theta^{(k)})$ using the existing $B$, $r$ and $h$ updates.
+\item Check diagnostics \emph{within each fixed parameter set}. Retain the
+parameter-draw identifiers so conditional convergence and prior mixing
+remain distinct.
+\item With complete equal quotas, estimate a state summary by giving each
+parameter set weight $1/K$:
+\[
+\widehat{E_q[f(X)]}=\frac1K\sum_{k=1}^{K}
+\frac1{CR}\sum_{c=1}^{C}\sum_{s=1}^{R}f(X^{(k,c,s)}).
+\]
+\end{enumerate}
+Do not redraw $\theta$ after one state sweep: a single sweep is generally not
+a draw from the new conditional smoother.
+
+\begin{quote}\small\ttfamily
+result = run\_weekly\_model\_report( ...\\
+\hspace*{3mm}ParameterSource="prior", PriorParameterDraws=10, ...\\
+\hspace*{3mm}SmoothStates=true, WarmupIterations=100, ...\\
+\hspace*{3mm}RetainedDraws=100, NumChains=4, ParallelChains=true, ...\\
+\hspace*{3mm}CorrelationBackend="mex\_new", MaxHours=12);
+\end{quote}
+This requests \textbf{10 independent parameter sets} and
+$10\times4\times100=4{,}000$ conditional state draws. All parameter sets
+share one \code{MaxHours} stage budget. An incomplete run with unequal
+component quotas is not pooled as an equally weighted mixture.
+
+\subsection*{How to judge the result}
+For each fixed $\theta^{(k)}$, the reference checks are
+$\widehat R<1.01$, bulk ESS and tail ESS $\geq400$, and
+MCSE/posterior SD $\leq0.05$. Enough retained draws and multiple independent
+chains are needed for useful checks. Never compute cross-chain $\widehat R$
+by treating different $\theta$ sets as chains of the same target. Good
+conditional diagnostics do not establish accuracy of the outer prior
+integral; $K$ controls a separate integration error.
+
+\textbf{Scope of this version.} Prior mode skips posterior parameter
+estimation and loading, requires \code{SmoothStates=true}, and does not
+support automatic extension or resume. The existing publication builder
+supports posterior runs with smoothing; this standalone note explains all
+three modes. State figures and saved diagnostic artifacts remain available
+for prior mode.
+
+{\footnotesize\color{ink}Implementation basis: \code{run\_weekly\_model\_report.m},
+\code{dsc\_prepare\_inference.m}, \code{dsc\_run\_inference.m},
+\code{dsc\_sample.m}, and \code{dsc\_calibrate\_priors.m} in this branch.
+No performance, posterior, or convergence results are claimed here.}
+\end{document}

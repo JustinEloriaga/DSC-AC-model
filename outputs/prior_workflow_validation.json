@@ -1,0 +1,396 @@
+{
+  "schema_version": 1,
+  "validation_date": "2026-10-15",
+  "scope": "Synthetic and regression tests only; no production estimation was launched.",
+  "branch": "jrrnotall-checkpriors",
+  "base_commit": "07d15f0427f807109075cb108ac66e8ef62019ae",
+  "rounds": [
+    {
+      "round": 1,
+      "suites": [
+        "test_prior_smoothing",
+        "test_inference_workflow",
+        "test_bayes_paths",
+        "test_model_report"
+      ],
+      "note": "Broad regression run; an inadvertently discovered helper entry is excluded from this summary."
+    },
+    {
+      "round": 2,
+      "suites": [
+        "test_prior_smoothing",
+        "test_prior_entry_point"
+      ],
+      "note": "Final focused rerun after the public-entry-point tests were split out and estimation-only state-figure suppression was finalized."
+    }
+  ],
+  "selection": "Latest result for each distinct test name; helper functions excluded.",
+  "counts": {
+    "distinct_tests": 45,
+    "passed": 45,
+    "failed": 0,
+    "incomplete": 0
+  },
+  "tests": [
+    {
+      "name": "test_prior_smoothing/testSeedRngAndPositiveDefiniteDraws",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.38793533333333335,
+      "validation_round": 2
+    },
+    {
+      "name": "test_prior_smoothing/testPriorMeansUseIgScaleAndIwScale",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.23119687499999997,
+      "validation_round": 2
+    },
+    {
+      "name": "test_prior_smoothing/testInvalidPriorFailsBeforeTouchingRng",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.11922520833333332,
+      "validation_round": 2
+    },
+    {
+      "name": "test_prior_smoothing/testFixedThetaPerComponentWarmupIdentityAndMixture",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 1.4111205416666666,
+      "validation_round": 2
+    },
+    {
+      "name": "test_prior_smoothing/testSharedTimeCapPreservesAllPriorDrawsAndIncompleteMixture",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.09215916666666667,
+      "validation_round": 2
+    },
+    {
+      "name": "test_prior_smoothing/testInvalidConfigsNeverCreateRunDirectory",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.06912433333333334,
+      "validation_round": 2
+    },
+    {
+      "name": "test_prior_smoothing/testFailurePreservesDrawsWithoutRetryOrDroppingComponent",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.13385620833333334,
+      "validation_round": 2
+    },
+    {
+      "name": "test_inference_workflow/testCutoffPriorsIgnoreLaterReturns",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.18446204166666666,
+      "validation_round": 1
+    },
+    {
+      "name": "test_inference_workflow/testEstimationOnlySkipsSecondSmoother",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.48933316666666665,
+      "validation_round": 1
+    },
+    {
+      "name": "test_inference_workflow/testPriorPreparationSkipsPosteriorLoading",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.03945979166666667,
+      "validation_round": 1
+    },
+    {
+      "name": "test_inference_workflow/testUnsupportedWorkflowOptionsRejectEarly",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.08019312499999999,
+      "validation_round": 1
+    },
+    {
+      "name": "test_inference_workflow/testEstimateThenExtendWithFrozenParameters",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.9365250416666666,
+      "validation_round": 1
+    },
+    {
+      "name": "test_inference_workflow/testLatestDateDefaultsToMeanSmoothing",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.5287304166666668,
+      "validation_round": 1
+    },
+    {
+      "name": "test_inference_workflow/testLatestDateExplicitDrawsUsesJointEstimation",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.2849571666666667,
+      "validation_round": 1
+    },
+    {
+      "name": "test_inference_workflow/testWarmupOnlyCannotSaveParameters",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.13481766666666667,
+      "validation_round": 1
+    },
+    {
+      "name": "test_inference_workflow/testInvalidModeOptions",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.03938791666666666,
+      "validation_round": 1
+    },
+    {
+      "name": "test_inference_workflow/testTwoChainReportEstimateSmoothReloadPosteriorMeans",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 1.2927878750000001,
+      "validation_round": 1
+    },
+    {
+      "name": "test_inference_workflow/testReportModeContinuesAfterFailedEstimationDiagnostics",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 1.461349416666667,
+      "validation_round": 1
+    },
+    {
+      "name": "test_inference_workflow/testOffModeAndReportModeContinueWithUndiagnosedLoad",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 1.8075321666666666,
+      "validation_round": 1
+    },
+    {
+      "name": "test_inference_workflow/testUnsupportedConvergenceModeRejectedBeforeInferenceWrites",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.021302375000000002,
+      "validation_round": 1
+    },
+    {
+      "name": "test_inference_workflow/testPublicEntryRejectsRemovedModeBeforeDataAccess",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.056585375,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testDiagnosticMetadataPreservedWithoutExtraJson",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 7.768033458333333,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testConditionalPathsRecordSavedProvenance",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 4.657416916666667,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testStaleRunMetadataRejectsBeforeExport",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.0338445,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testSampleMismatchRejectsBeforeExport",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.03079595833333333,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testMissingFixedMetadataRejects",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.020577458333333336,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testLegacyPathsRemainSupported",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 12.615747041666665,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testMultipleChainsPoolBandsAndPreserveDrawProvenance",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 3.0049109166666663,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testDuplicateChainDirectoriesRejectBeforeExport",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.02836429166666667,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testDuplicateChainIdsRejectBeforeExport",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.023334708333333332,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testPerChainCountsMustMatchSummary",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.027646666666666667,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testIterationsMustIncreaseWithinEachChain",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.024395999999999998,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testMultichainDateIdentityMustMatch",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.022913374999999996,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testCannotLabelConvergedWithoutSavedDiagnostics",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.0271965,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testPriorConditionalMixturePreservesPriorProvenance",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 2.9208628749999996,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testIncompletePriorMixtureRejectsBeforeExport",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.06854983333333332,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testUnequalPriorWeightsRejectBeforeExport",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.03769195833333334,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testUnequalCompletedPriorQuotasRejectBeforeExport",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.036174875,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testPriorGroupIdentityRejectsBeforeExport",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.03166525,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testPriorMixtureCannotClaimPooledConvergence",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.033744166666666665,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testPriorConditionalDiagnosticsPreserveGroupChainIds",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.03387025,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testPriorDatesMustMatchActualDrawSample",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.039787333333333334,
+      "validation_round": 1
+    },
+    {
+      "name": "test_bayes_paths/testPriorMetadataIsRequired",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 0.04047475,
+      "validation_round": 1
+    },
+    {
+      "name": "test_model_report/testCsvToEstimateAndLoadWorkflow",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 201.92178958333335,
+      "validation_round": 1
+    },
+    {
+      "name": "test_prior_entry_point/testPriorThenEstimationOnlyPublicOptions",
+      "passed": true,
+      "failed": false,
+      "incomplete": false,
+      "duration_seconds": 12.106792958333333,
+      "validation_round": 2
+    }
+  ]
+}
