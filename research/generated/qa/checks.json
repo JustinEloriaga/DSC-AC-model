@@ -1,0 +1,59 @@
+{
+  "weekly_correlation_report": {
+    "pages": 7,
+    "text_characters": 18472,
+    "latex_issues": [],
+    "rendered_pages": [
+      "page-1.png",
+      "page-2.png",
+      "page-3.png",
+      "page-4.png",
+      "page-5.png",
+      "page-6.png",
+      "page-7.png"
+    ],
+    "contact_sheet_count": 1
+  },
+  "weekly_correlation_paths": {
+    "pages": 11,
+    "text_characters": 164235,
+    "latex_issues": [],
+    "rendered_pages": [
+      "page-01.png",
+      "page-02.png",
+      "page-03.png",
+      "page-04.png",
+      "page-05.png",
+      "page-06.png",
+      "page-07.png",
+      "page-08.png",
+      "page-09.png",
+      "page-10.png",
+      "page-11.png"
+    ],
+    "contact_sheet_count": 1
+  },
+  "weekly_correlation_slides": {
+    "pages": 15,
+    "text_characters": 17997,
+    "latex_issues": [],
+    "rendered_pages": [
+      "page-01.png",
+      "page-02.png",
+      "page-03.png",
+      "page-04.png",
+      "page-05.png",
+      "page-06.png",
+      "page-07.png",
+      "page-08.png",
+      "page-09.png",
+      "page-10.png",
+      "page-11.png",
+      "page-12.png",
+      "page-13.png",
+      "page-14.png",
+      "page-15.png"
+    ],
+    "contact_sheet_count": 2
+  }
+}

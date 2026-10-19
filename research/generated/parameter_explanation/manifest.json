@@ -1,0 +1,27 @@
+{
+  "parameter_file": "/Users/jrubior/Documents/GitHub/DSC-AC-model/outputs/weekly_research/parameters/dsc_parameters_20260927T090855845Z_0286d4ba-f106-4588-bd10-c52848277526.mat",
+  "parameter_file_sha256": "aa6efcf6f1dd66150355159caac56498bcaebdaff8c15934646f92bf35399ea5",
+  "source_hash": "f11259e4c6347a54204cecb4f5ac3363c06ef2b05f787ab33ed9ab99e04c5bd7",
+  "run_dir": "/Users/jrubior/Documents/GitHub/DSC-AC-model/outputs/weekly_research/runs/20260926-230854-651-chain1-w20-r500-thin1/estimation",
+  "retained_draws": 951,
+  "chain_counts": [
+    231,
+    238,
+    244,
+    238
+  ],
+  "convergence_established": false,
+  "fixed_parameters_summarized": 210,
+  "positive_definite_V_draws": 951,
+  "generated_source": "/Users/jrubior/Documents/GitHub/DSC-AC-model/research/parameter_priors_posteriors.tex",
+  "summary_scope": "All retained post-burn-in draws pooled; chain IDs preserved for traces.",
+  "prior_moments": "Analytical inverse-gamma and inverse-Wishart moments.",
+  "density_method": "Gaussian KDE in log(parameter / prior mean), transformed back with Jacobian.",
+  "sources": {
+    "outputs/weekly_research/runs/20260926-230854-651-chain1-w20-r500-thin1/estimation/pilot_summary.json": "628fc812bb7a6349557b0999f74ea1b416efb35717eed9c0aa91f4a7997358f5",
+    "outputs/weekly_research/runs/20260926-230854-651-chain1-w20-r500-thin1/run_manifest.json": "3b2f8209c45a9bfb43fcf6144b6bfbbd9eb83dd3a316a51787ba988ba7530575",
+    "toolbox/dsc_sample.m": "cce44ed0b51ae12e945e8d6a0424d70bae16baaefbe4cb8724a2012791f7643a",
+    "toolbox/dsc_calibrate_priors.m": "7e6f675781a8c656a10224bc768ced8c5eff0e5c488c39af3d932125ea925e12",
+    "toolbox/dsc_prepare_inference.m": "9df0ed6582a595c19f33a8fdf5085e216f3eef272796c913698c9f8f4a38aadc"
+  }
+}

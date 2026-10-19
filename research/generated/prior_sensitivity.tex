@@ -1,0 +1,15 @@
+\par\medskip\noindent
+{\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Window (weeks) & Log-variance prior mean & Correlation-coordinate prior mean\\
+\midrule
+52 & 0.0035527 & 0.0008987\\
+104 & 0.0010940 & 0.0002381\\
+156 & 0.0004885 & 0.0001066\\
+\bottomrule
+\end{tabular}
+}
+\par\medskip
+These are prior means for innovation variances, not return correlations.
+The first 104 weekly returns are reserved for initial-prior calibration and excluded from the estimation and smoothing likelihoods. Model time begins at the first return after that initial period. Evolution-prior scales continue to use rolling windows through the parameter-estimation cutoff, including some observations that also enter estimation. Later observations do not recalibrate a loaded model.\par

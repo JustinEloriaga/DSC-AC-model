@@ -1,0 +1,16 @@
+{
+  "status": "passed",
+  "synthetic_evaluation_cases": 64,
+  "max_absolute_errors": {
+    "matrix_log_coordinate": 4.440892098500626e-15,
+    "bivariate_likelihood": 1.3926637620897964e-12,
+    "mean_path_covariance_factorization": 2.4158453015843406e-13,
+    "scalar_path_covariance_factorization": 1.7763568394002505e-14,
+    "scalar_initial_schur_complement": 1.3322676295501878e-15,
+    "inverse_gamma_full_conditional": 1.2256862191861728e-13,
+    "batch_vs_sequential_joint_kernel": 1.6342482922482304e-13,
+    "joint_transition_block_covariance": 3.552713678800501e-15,
+    "inverse_wishart_full_conditional": 7.815970093361102e-14
+  },
+  "scope": "Algebra checks, not posterior estimation or numerical evidence integration."
+}
