@@ -200,7 +200,8 @@ colormap(fig,cmap);
 for pos = 1:numel(indices)
     k = indices(pos);
     ax = nexttile; hold(ax,'on');
-    draw_bars(ax,x,median_path(:,k));
+    limits = correlation_panel_limits(median_path(:,k),lower(:,k),upper(:,k));
+    draw_bars(ax,x,median_path(:,k),limits);
     fill(ax,[x; flipud(x)],[lower(:,k); flipud(upper(:,k))],[0.08 0.19 0.31], ...
         'FaceAlpha',0.16,'EdgeColor','none');
     plot(ax,x,median_path(:,k),'Color',[0.02 0.10 0.20],'LineWidth',1.1);
@@ -212,7 +213,7 @@ for pos = 1:numel(indices)
             xline(ax,cutoff,'--','Color',[.25 .25 .25],'LineWidth',.9,'HandleVisibility','off');
         end
     end
-    ylim(ax,[-1 1]); xlim(ax,[x(1) x(end)]);
+    ylim(ax,limits); xlim(ax,[x(1) x(end)]);
     clim(ax,[-1 1]);
     datetick(ax,'x','yyyy','keeplimits');
     ylabel(ax,'P_{ij,t}');
@@ -458,9 +459,9 @@ function yes=positive_integer(value)
 yes=isnumeric(value)&&isreal(value)&&isscalar(value)&&isfinite(value)&&value>=1&&value==floor(value);
 end
 
-function draw_bars(ax,x,y)
+function draw_bars(ax,x,y,limits)
 edges = [x(1); (x(1:end-1)+x(2:end))/2; x(end)];
-image(ax,'XData',[edges(1) edges(end)],'YData',[-1 1], ...
+image(ax,'XData',[edges(1) edges(end)],'YData',limits, ...
     'CData',reshape(y,1,[]),'CDataMapping','scaled','AlphaData',0.22);
 set(ax,'YDir','normal');
 end
