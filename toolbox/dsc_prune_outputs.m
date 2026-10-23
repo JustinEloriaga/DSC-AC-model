@@ -1,39 +1,31 @@
-function dsc_prune_outputs(output_root,report_dir,current_run)
-% Keep only the newest completed runs and run-linked publication PDFs.
-run_root=fullfile(char(output_root),'runs');
-if isfolder(run_root)
-    entries=dir(run_root);
-    entries=entries([entries.isdir]&~ismember({entries.name},{'.','..'}));
-    names=string({entries.name});
-    [~,order]=sort(names,'descend');
-    entries=entries(order);
-    protected=false(size(entries));
-    for k=1:numel(entries)
-        path=fullfile(entries(k).folder,entries(k).name);
-        protected(k)=isfile(fullfile(path,'.run_in_progress'))|| ...
-            strcmp(path,char(current_run));
-    end
-    keep_completed=max(0,3-sum(protected));
-    completed_kept=0;
-    for k=1:numel(entries)
-        if protected(k), continue; end
-        if completed_kept<keep_completed
-            completed_kept=completed_kept+1;
-        else
-            rmdir(fullfile(entries(k).folder,entries(k).name),'s');
+function dsc_prune_outputs(output_root,~,current_run)
+% Keep the newest three complete prefixed runs and every artifact they own.
+% Active runs and the explicitly selected stopped/current run are protected.
+% Incomplete, failed and unclassified runs are eligible for cleanup.
+root=char(output_root);
+if ~isfolder(root), return; end
+manifests=dir(fullfile(root,'*_run_manifest.json'));
+if isempty(manifests), return; end
+[~,order]=sort({manifests.name},'descend'); manifests=manifests(order);
+prefixes=cell(size(manifests));
+for k=1:numel(manifests)
+    name=manifests(k).name;
+    prefixes{k}=name(1:end-numel('run_manifest.json'));
+end
+current=char(current_run);
+if isfolder(current), [~,current]=fileparts(current); end
+kept=0;
+for k=1:numel(prefixes)
+    p=prefixes{k};
+    active=isfile(fullfile(root,[p '.run_in_progress']));
+    selected=strcmp(p,current)||strcmp([p 'run_manifest.json'],current);
+    if active||selected||kept<3
+        if ~active&&~selected, kept=kept+1; end
+    else
+        files=dir(fullfile(root,[p '*']));
+        for j=1:numel(files)
+            if ~files(j).isdir, delete(fullfile(files(j).folder,files(j).name)); end
         end
     end
-end
-prune_pdfs(char(report_dir),'report_*.pdf');
-prune_pdfs(char(report_dir),'figure_*.pdf');
-end
-
-function prune_pdfs(report_dir,pattern)
-if ~isfolder(report_dir), return; end
-files=dir(fullfile(report_dir,pattern));
-names=string({files.name});
-[~,order]=sort(names,'descend');
-for k=4:numel(order)
-    delete(fullfile(files(order(k)).folder,files(order(k)).name));
 end
 end

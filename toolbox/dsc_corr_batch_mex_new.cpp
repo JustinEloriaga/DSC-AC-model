@@ -1,11 +1,14 @@
 // Batched 2026-style inverse GFT map and Gaussian correlation likelihood.
-// [ll,P,L,logdet,iterations] = dsc_corr_batch_mex_new(r,Z,mask,threads)
+// [ll,P,L,logdet,iterations,diagonal] = dsc_corr_batch_mex_new(r,Z,mask,threads,guess)
 // This is the experimental "mex_new" backend. It solves the log-diagonal
 // residual equation ell(x)=log(diag(exp(A[x;r])))=0 with an analytic Newton
 // system specialized for small DSC matrices, preserving the existing MEX API.
 // The exponential Frechet derivative reuses the current eigensystem. This
 // dense solve is not the paper's matrix-free PCG implementation.
 // threads is optional, defaults to 1, and must be an integer in [1,64].
+// guess is optional T-by-m finite log-diagonal initialization. The sixth
+// output contains the solved T-by-m diagonals and can initialize nearby
+// proposals. It changes only initialization, never the convergence criterion.
 // r: T-by-m*(m-1)/2, column-major strict-lower-triangle coordinates.
 // Z: T-by-m standardized residuals; mask: T-by-m logical observations.
 // P and L: m-by-m-by-T. L contains each observed-space lower Cholesky
@@ -58,16 +61,16 @@ bool real_full_double(const mxArray* value) {
 }
 
 void evaluate(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
-    require(nrhs == 3 || nrhs == 4,
-            "Expected inputs r, Z, a logical observation mask and optional threads.");
-    require(nlhs <= 5, "At most five outputs are available.");
+    require(nrhs >= 3 && nrhs <= 5,
+            "Expected inputs r, Z, a logical observation mask, optional threads and optional diagonal guess.");
+    require(nlhs <= 6, "At most six outputs are available.");
     require(real_full_double(prhs[0]) && real_full_double(prhs[1]),
             "r and Z must be real, full, two-dimensional double arrays.");
     require(mxIsLogical(prhs[2]) && !mxIsSparse(prhs[2]) &&
             mxGetNumberOfDimensions(prhs[2]) == 2,
             "mask must be a full, two-dimensional logical array.");
     mwSize requested_threads = 1;
-    if (nrhs == 4) {
+    if (nrhs >= 4) {
         require(real_full_double(prhs[3]) && mxGetNumberOfElements(prhs[3]) == 1,
                 "threads must be a double scalar integer in [1,64].");
         const double value = mxGetScalar(prhs[3]);
@@ -87,23 +90,31 @@ void evaluate(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
             "r must be T-by-m*(m-1)/2, consistent with Z.");
     require(mxGetM(prhs[2]) == T && mxGetN(prhs[2]) == m,
             "mask must have the same dimensions as Z.");
+    if (nrhs == 5) {
+        require(real_full_double(prhs[4]) && mxGetM(prhs[4]) == T && mxGetN(prhs[4]) == m,
+                "The diagonal guess must be a real, full, T-by-m double array.");
+    }
     require(T == 0 || mm <= std::numeric_limits<mwSize>::max() / T,
             "The requested batch exceeds the native indexing limit.");
     const double* input_r = mxGetDoubles(prhs[0]);
     const double* input_Z = mxGetDoubles(prhs[1]);
     const mxLogical* input_mask = mxGetLogicals(prhs[2]);
+    const double* input_guess = nrhs == 5 ? mxGetDoubles(prhs[4]) : nullptr;
     for (mwSize k = 0; k < mxGetNumberOfElements(prhs[0]); ++k) {
         require(std::isfinite(input_r[k]), "All correlation coordinates must be finite.");
     }
     for (mwSize k = 0; k < mxGetNumberOfElements(prhs[1]); ++k) {
         require(!input_mask[k] || std::isfinite(input_Z[k]),
                 "Every observed standardized residual must be finite.");
+        require(!input_guess || std::isfinite(input_guess[k]),
+                "All diagonal guesses must be finite.");
     }
 
     double* Pout = nullptr;
     double* Lout = nullptr;
     double* logdet_out = nullptr;
     double* iterations_out = nullptr;
+    double* diagonal_out = nullptr;
     const mwSize dimensions[3] = {m, m, T};
     if (nlhs >= 2) {
         plhs[1] = mxCreateNumericArray(3, dimensions, mxDOUBLE_CLASS, mxREAL);
@@ -121,6 +132,10 @@ void evaluate(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
         plhs[4] = mxCreateDoubleMatrix(T, 1, mxREAL);
         iterations_out = mxGetDoubles(plhs[4]);
     }
+    if (nlhs >= 6) {
+        plhs[5] = mxCreateDoubleMatrix(T, m, mxREAL);
+        diagonal_out = mxGetDoubles(plhs[5]);
+    }
     if (T == 0) {
         if (nlhs >= 1) plhs[0] = mxCreateDoubleScalar(0.0);
         return;
@@ -128,11 +143,12 @@ void evaluate(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
 
     // Copy all inputs before starting workers. Workers invoke no mx/mex API
     // and write only to disjoint, already allocated output-array segments.
-    std::vector<double> r(T*q), Z(T*m);
+    std::vector<double> r(T*q), Z(T*m), initial_diagonal;
     std::vector<unsigned char> mask(T*m);
     if (q != 0) std::copy(input_r, input_r + T*q, r.begin());
     std::copy(input_Z, input_Z + T*m, Z.begin());
     std::copy(input_mask, input_mask + T*m, mask.begin());
+    if (input_guess) initial_diagonal.assign(input_guess, input_guess + T*m);
     std::vector<double> date_likelihood(T, 0.0);
 
     auto process_dates = [&](mwSize begin_date, mwSize end_date) {
@@ -157,6 +173,9 @@ void evaluate(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
     const double tolerance = 1e-8 * std::sqrt(static_cast<double>(m));
 
     for (mwSize t = begin_date; t < end_date; ++t) {
+        if (input_guess) {
+            for (mwSize i = 0; i < m; ++i) diagonal[i] = initial_diagonal[t + T*i];
+        }
         mwSize coordinate = 0;
         for (mwSize j = 0; j < m; ++j) {
             for (mwSize i = j + 1; i < m; ++i, ++coordinate) {
@@ -164,9 +183,9 @@ void evaluate(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
                 base[j + m*i] = base[i + m*j];
             }
         }
-        // Each block's first date starts at zero; remaining dates use the
-        // preceding solved diagonal. One thread exactly retains the original
-        // across-date warm starts. Block boundaries only change initialization.
+        // Without explicit guesses, each block starts at zero and subsequent
+        // dates reuse the preceding solved diagonal. With guesses, every date
+        // starts from its corresponding accepted-state diagonal.
         auto log_diagonal_residual = [&]() {
             std::copy(base.begin(), base.end(), eigenvectors.begin());
             for (mwSize i = 0; i < m; ++i) eigenvectors[i + m*i] = diagonal[i];
@@ -292,6 +311,9 @@ void evaluate(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
         }
         if (Pout) std::copy(C.begin(), C.end(), Pout + mm*t);
         if (iterations_out) iterations_out[t] = static_cast<double>(iteration);
+        if (diagonal_out) {
+            for (mwSize i = 0; i < m; ++i) diagonal_out[t + T*i] = diagonal[i];
+        }
 
         mwSize nobs = 0;
         for (mwSize i = 0; i < m; ++i) {

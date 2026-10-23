@@ -15,10 +15,9 @@ sd = sqrt(diag(S0)); C0 = S0./(sd*sd');
 nr = m*(m-1)/2; sel = tril(true(m),-1);
 [Q,L] = eig((C0+C0')/2,'vector');
 A = Q*diag(log(L))*Q';
-priors.Bbar = mean(X0,1)';
-priors.VBbar = S0/size(X0,1);
-priors.nuB = size(X0,1);
-priors.V0B = priors.VBbar*priors.nuB*cfg.kB^2;
+priors.mean_model = 'constant';
+priors.mu0 = mean(X0,1)';
+priors.mu_cov0 = 4*S0/size(X0,1);
 priors.mh0 = log(diag(S0));
 priors.mr0 = A(sel);
 priors.h0_scale = 10;
@@ -55,6 +54,11 @@ if isempty(chosen)||~isfinite(cal(chosen).sig2h_median)||~isfinite(cal(chosen).s
 end
 priors.sig2h_mean=max(cal(chosen).sig2h_median,1e-8);
 priors.sig2r_mean=max(cal(chosen).sig2r_median,1e-8);
+% User-facing innovation-variance names. No dynamic mean covariance exists.
+priors.delta_mean=priors.sig2h_mean;
+priors.gamma_mean=priors.sig2r_mean;
+priors.delta_definition='delta_j = Var(h_jt-h_j,t-1) = sig2h_j';
+priors.gamma_definition='gamma_k = Var(r_kt-r_k,t-1) = sig2r_k';
 priors.ig_shape=cfg.ig_shape;
 if priors.ig_shape<=1, error('dsc:PriorShape','Inverse gamma shape must exceed one.'); end
 priors.ig_scale_h=priors.sig2h_mean*(priors.ig_shape-1);

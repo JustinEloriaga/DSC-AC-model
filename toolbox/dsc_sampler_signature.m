@@ -1,22 +1,22 @@
-function info=dsc_sampler_signature(backend)
+function info=dsc_sampler_signature(backend,mean_backend)
 % Refuse to resume with a different numerical implementation or native binary.
+if nargin<2||strcmp(mean_backend,'auto')
+    if exist('dsc_constant_mean_mex','file')==3, mean_backend='native';
+    else, mean_backend='matlab'; end
+end
 folder=fileparts(mfilename('fullpath'));
-names={'dsc_sample.m','dsc_sampler_signature.m','dsc_corr_matrix.m', ...
+names={'dsc_sample.m','dsc_sampler_signature.m','dsc_constant_mean_draw.m','dsc_corr_matrix.m', ...
     'dsc_corr_matrix_new.m','dsc_random_walk_draw.m','dsc_volatility_likelihood.m'};
-mean_backend='matlab';
 if strcmp(backend,'mex')||strcmp(backend,'mex_new')
     if strcmp(backend,'mex_new')
-        corr_source='dsc_corr_batch_mex_new.cpp';
-        corr_binary=['dsc_corr_batch_mex_new.' mexext];
+        corr_source='dsc_corr_batch_mex_new.cpp'; corr_binary=['dsc_corr_batch_mex_new.' mexext];
     else
-        corr_source='dsc_corr_batch_mex.cpp';
-        corr_binary=['dsc_corr_batch_mex.' mexext];
+        corr_source='dsc_corr_batch_mex.cpp'; corr_binary=['dsc_corr_batch_mex.' mexext];
     end
     names=[names,{corr_source,corr_binary}];
-    if exist('dsc_mean_mex','file')==3
-        mean_backend='mex';
-        names=[names,{'dsc_mean_mex.cpp',['dsc_mean_mex.' mexext]}];
-    end
+end
+if strcmp(mean_backend,'native')
+    names=[names,{'dsc_constant_mean_mex.cpp',['dsc_constant_mean_mex.' mexext]}];
 end
 md=java.security.MessageDigest.getInstance('SHA-256');
 for k=1:numel(names)
@@ -26,7 +26,8 @@ for k=1:numel(names)
     guard=onCleanup(@()fclose(fid));
     md.update(fread(fid,Inf,'*uint8')); md.update(uint8(0)); clear guard
 end
-info=struct('version',3,'correlation_backend',backend,'mean_backend',mean_backend,'matlab_version',version, ...
+info=struct('version',4,'schema','constant_mu_v1','correlation_backend',backend, ...
+    'mean_backend',mean_backend,'mean_model','constant','matlab_version',version, ...
     'platform',computer,'source_and_binary_sha256', ...
     lower(reshape(dec2hex(typecast(md.digest(),'uint8'),2).',1,[])));
 end

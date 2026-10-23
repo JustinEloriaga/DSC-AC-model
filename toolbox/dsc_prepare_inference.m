@@ -8,7 +8,7 @@ if ~islogical(cfg.estimate_parameters)||~isscalar(cfg.estimate_parameters)
 end
 if ~isfield(cfg,'estimation_end_date'), cfg.estimation_end_date=''; end
 if ~isfield(cfg,'parameter_dir')||strlength(string(cfg.parameter_dir))==0
-    cfg.parameter_dir=fullfile(cfg.output_root,'parameters');
+    cfg.parameter_dir=cfg.output_root;
 end
 if ~isfield(cfg,'parameter_file'), cfg.parameter_file=''; end
 if ~isfield(cfg,'parameter_smoothing')||strlength(string(cfg.parameter_smoothing))==0

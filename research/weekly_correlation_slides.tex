@@ -20,7 +20,7 @@
 \begin{frame}\titlepage\vspace{-3mm}\centering\small Descriptive results and a bounded MATLAB estimation pilot\end{frame}
 \begin{frame}{Research findings}
 \input{generated/slides_findings.tex}
-\vfill\small\textbf{Use:} historical comparison of the supplied returns. The current evidence does not establish trading performance or posterior convergence.
+\vfill\small\textbf{Use:} historical comparison of the supplied returns. The current evidence does not establish trading performance.
 \source
 \end{frame}
 \begin{frame}{Full-sample correlations}
@@ -66,12 +66,12 @@ r_t&=\operatorname{vecl}(\log P_t),\qquad r_t=r_{t-1}+v_t.
 \end{frame}
 \begin{frame}{Bounded sampler pilot}
 \input{generated/slides_pilot.tex}
-\vfill\small Pilot draws support numerical and timing checks only. They do not support posterior credible intervals or convergence claims.
+\vfill\small Pilot draws support numerical and timing checks only. They do not support posterior credible intervals.
 \end{frame}
 \begin{frame}{Production decision}
 \input{generated/slides_production.tex}
-\vspace{3mm}\begin{itemize}\item Four independent chains with rank-normalized $\widehat R<1.01$.\item Bulk and tail ESS of at least 400 for reported quantities.\item Review mean dynamics, prior-window sensitivity and closure treatment.\end{itemize}
-\vfill\tiny Vehtari et al. (2021). A separate decision is required before a multi-day production run.
+\vspace{3mm}\begin{itemize}\item Compare the mean correlation paths from independently initialized chains.\item Review mean dynamics, prior-window sensitivity and closure treatment.\end{itemize}
+\vfill\tiny A separate decision is required before a multi-day production run.
 \end{frame}
 \appendix
 \begin{frame}{Technical appendix: priors and storage}

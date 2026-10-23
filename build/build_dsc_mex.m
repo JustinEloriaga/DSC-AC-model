@@ -1,33 +1,36 @@
 function build_info = build_dsc_mex()
-%BUILD_DSC_MEX Build the optional correlation and mean-smoothing kernels.
+%BUILD_DSC_MEX Build the current constant-mean DSC native kernels.
 % Uses the configured C++ compiler and MATLAB's bundled LAPACK/BLAS.
-% On macOS, installed Apple Command Line Tools are also supported when
-% MATLAB's compiler detector requires a full Xcode installation.
+% On macOS, invoke Apple Command Line Tools directly, without mex creating
+% temporary build directories. Every artifact uses the existing toolbox.
+% The classical correlation kernel is built for regression/timing comparisons;
+% the historical dynamic-mean FFBS kernel is not part of the current build.
 % This helper does not change sampler defaults or compiler preferences.
 % After building, add toolbox to the MATLAB path to call
-% [ll,P,L,logdet,iterations] = dsc_corr_batch_mex(r,Z,mask,threads)
-% or dsc_corr_batch_mex_new(r,Z,mask,threads).
+% [ll,P,L,logdet,iterations,x] = dsc_corr_batch_mex_new(r,Z,mask,threads,guess)
+% mu = dsc_constant_mean_mex(Y,h,P,mask,mu0,S0,z)
 % threads is optional (default 1); native date workers are limited to 64.
 root = fileparts(fileparts(mfilename('fullpath')));
 target_dir = fullfile(root,'toolbox');
+assert(isfolder(target_dir),'dsc:MexBuild','The toolbox directory must already exist.');
 source = fullfile(target_dir,'dsc_corr_batch_mex.cpp');
 new_source = fullfile(target_dir,'dsc_corr_batch_mex_new.cpp');
-mean_source = fullfile(target_dir,'dsc_mean_mex.cpp');
+mean_source = fullfile(target_dir,'dsc_constant_mean_mex.cpp');
 compiler = mex.getCompilerConfigurations('C++','Selected');
-use_command_line_tools = isempty(compiler) && ismac;
+use_command_line_tools = ismac;
 if isempty(compiler) && ~use_command_line_tools
     error('dsc:MexCompiler', ...
         'No C++ MEX compiler is configured. Run mex -setup C++ and retry build_dsc_mex.');
 end
-fprintf('DSC correlation MEX build: MATLAB %s (%s), %s\n', ...
+fprintf('Constant-mean DSC MEX build: MATLAB %s (%s), %s\n', ...
     version,version('-release'),computer('arch'));
 fprintf('Source: %s\nOutput: %s\n',source,target_dir);
 fprintf('Libraries: MATLAB bundled mwlapack and mwblas; optional std::thread workers, no OpenMP.\n');
 started = tic;
-clear dsc_corr_batch_mex dsc_corr_batch_mex_new dsc_mean_mex
+clear dsc_corr_batch_mex dsc_corr_batch_mex_new dsc_constant_mean_mex
 artifact = fullfile(target_dir,['dsc_corr_batch_mex.' mexext]);
 new_artifact = fullfile(target_dir,['dsc_corr_batch_mex_new.' mexext]);
-mean_artifact = fullfile(target_dir,['dsc_mean_mex.' mexext]);
+mean_artifact = fullfile(target_dir,['dsc_constant_mean_mex.' mexext]);
 if use_command_line_tools
     [compiler_name,compiler_version] = build_with_command_line_tools(source,artifact);
     build_with_command_line_tools(new_source,new_artifact);
@@ -46,7 +49,7 @@ else
     mex('-R2018a','-O','-v',threading_flags{:},new_source,'-lmwlapack','-lmwblas', ...
         '-outdir',target_dir,'-output','dsc_corr_batch_mex_new');
     mex('-R2018a','-O','-v',threading_flags{:},mean_source,'-lmwlapack','-lmwblas', ...
-        '-outdir',target_dir,'-output','dsc_mean_mex');
+        '-outdir',target_dir,'-output','dsc_constant_mean_mex');
     build_method = 'MATLAB mex';
 end
 build_info = struct('artifact',artifact,'source',source, ...
@@ -56,7 +59,9 @@ build_info = struct('artifact',artifact,'source',source, ...
     'architecture',computer('arch'),'compiler_name',compiler_name, ...
     'compiler_version',compiler_version,'build_method',build_method,'seconds',toc(started), ...
     'libraries',{{'mwlapack','mwblas'}},'openmp',false, ...
-    'native_threads_default',1,'native_threads_limit',64);
+    'native_threads_default',1,'native_threads_limit',64, ...
+    'model','constant_mu_v1','mean_backend','constant_gaussian', ...
+    'legacy_correlation_reference',artifact,'dynamic_mean_kernel_built',false);
 fprintf('Built %s, %s and %s in %.2f seconds.\n',artifact,new_artifact,mean_artifact,build_info.seconds);
 end
 

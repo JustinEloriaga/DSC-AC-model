@@ -3,22 +3,18 @@ function result = dsc_run_inference(panel,priors,cfg,run_dir,inference)
 % With an earlier cutoff, estimation and full-history conditional smoothing
 % are separate stages. Each has the configured draw target and time budget.
 estimation_result=[];
-convergence_mode='report';
-if isfield(cfg,'convergence_mode'), convergence_mode=cfg.convergence_mode; end
-cfg.convergence_mode=validatestring(convergence_mode,{'off','report'});
-convergence_mode=cfg.convergence_mode;
 modeled=inference.smoothing_panel;
 parameter_smoothing=validatestring(inference.parameter_smoothing,{'draws','mean'});
 if inference.estimate_parameters
     training=inference.training_panel;
     extends_history=training.dates(end)<modeled.dates(end);
-    needs_conditional_smoothing=extends_history||strcmp(parameter_smoothing,'mean');
-    if needs_conditional_smoothing
-        estimation_dir=fullfile(run_dir,'estimation');
-    else
-        estimation_dir=run_dir;
-    end
+    % The same-history joint chain already samples all parameters/states.
+    needs_conditional_smoothing=extends_history;
+    estimation_dir=run_dir;
     estimation_cfg=cfg; estimation_cfg.estimate_parameters=true;
+    if needs_conditional_smoothing
+        estimation_cfg.file_prefix=[cfg.file_prefix 'estimation_'];
+    end
     fprintf('Estimating parameters through %s (%d weekly returns).\n', ...
         inference.estimation_end,numel(training.dates));
     estimation_result=dsc_run_chains(training,priors,estimation_cfg,estimation_dir);
@@ -37,12 +33,14 @@ if inference.estimate_parameters
     end
 else
     parameters=inference.parameters;
-    if isfield(parameters,'convergence')
-        fprintf('Saved estimation convergence: %s.\n',parameters.convergence.status);
-    end
     needs_conditional_smoothing=true; % Run conditional smoothing even with no new dates.
 end
 if needs_conditional_smoothing
+    if strcmp(parameter_smoothing,'draws')
+        warning('dsc:ApproximateParameterCycling', ...
+            ['Cycling saved variance draws with one state sweep per draw is an approximation to the posterior mixture. ' ...
+             'Use parameter_smoothing=mean for a fixed-variance conditional target.']);
+    end
     smoothing_cfg=cfg;
     smoothing_cfg.estimate_parameters=false;
     smoothing_cfg.parameter_smoothing=parameter_smoothing;
@@ -75,11 +73,18 @@ metadata=struct('estimate_parameters_requested',inference.estimate_parameters, .
     'smoothing_start',char(string(modeled.dates(1),'yyyy-MM-dd')), ...
     'smoothing_end',char(string(panel.dates(end),'yyyy-MM-dd')), ...
     'parameter_smoothing',parameter_smoothing, ...
-    'fixed_parameter_summary',parameter_summary_text(parameter_smoothing), ...
-    'state_scope','B, h and r jointly smoothed from smoothing_start through smoothing_end; calibration weeks excluded; historical modeled states may revise.', ...
+    'fixed_parameter_summary',parameter_summary_text(parameter_smoothing,result.inference_mode), ...
+    'state_scope','Static mu and stochastic h/r jointly inferred; calibration weeks excluded; historical smoothing may revise.', ...
     'parameter_uncertainty_in_bands',strcmp(result.inference_mode,'parameter_estimation')||strcmp(parameter_smoothing,'draws'));
-metadata.estimation_convergence=parameters.convergence;
-metadata.state_convergence=result.convergence;
+if strcmp(result.inference_mode,'parameter_estimation')
+    metadata.parameter_uncertainty_method='joint_posterior';
+elseif strcmp(parameter_smoothing,'draws')
+    metadata.parameter_uncertainty_method='single_sweep_cycling_approximation';
+    metadata.parameter_uncertainty_limitation='One conditional sweep per saved variance draw does not generally sample the exact posterior mixture.';
+else
+    metadata.parameter_uncertainty_method='fixed_variance_conditional';
+    metadata.parameter_uncertainty_limitation='Bands condition on posterior-mean delta/gamma; mu is resampled.';
+end
 metadata.num_chains=numel(result.chain_dirs);
 metadata.retained_draws_per_chain=result.saved_draws_per_chain;
 if ~isempty(estimation_result)
@@ -92,31 +97,38 @@ if isfield(parameters,'requested_retained_draws')
 end
 result.inference=metadata;
 result.paths.parameters=parameters.path;
+% Carry the parameter comparison into the run result as well as its bundle.
+% Older saved bundles without this additive report remain loadable.
+if isfield(parameters,'prior_posterior_summary')
+    result.prior_posterior_summary=parameters.prior_posterior_summary;
+    result.parameter_summary_metadata=parameters.parameter_summary_metadata;
+end
 % Snapshot the priors used by this run: another cutoff can overwrite the
 % shared analysis directory even when the CSV source hash is unchanged.
 priors=result.priors;
-write_json(fullfile(run_dir,'prior_summary.json'),priors);
+write_json(fullfile(run_dir,[cfg.file_prefix 'prior_summary.json']),priors);
 temporary=[tempname(run_dir),'.mat'];
 save(temporary,'priors','cfg','-v7.3');
-movefile(temporary,fullfile(run_dir,'calibrated_priors.mat'),'f');
-write_json(fullfile(run_dir,'inference_metadata.json'),metadata);
+movefile(temporary,fullfile(run_dir,[cfg.file_prefix 'calibrated_priors.mat']),'f');
+write_json(fullfile(run_dir,[cfg.file_prefix 'inference_metadata.json']),metadata);
 % Keep the selected run's manifest and result authoritative for rebuilding.
-manifest_path=fullfile(run_dir,'run_manifest.json');
+manifest_path=fullfile(run_dir,[cfg.file_prefix 'run_manifest.json']);
 if isfile(manifest_path), manifest=jsondecode(fileread(manifest_path));
 else, manifest=struct('source_hash',panel.source_hash); end
 manifest.inference=metadata;
-manifest.convergence_established=result.convergence_established;
 write_json(manifest_path,manifest);
 temporary=[tempname(run_dir),'.mat'];
 save(temporary,'result','-v7.3');
-movefile(temporary,fullfile(run_dir,'result.mat'),'f');
+movefile(temporary,fullfile(run_dir,[cfg.file_prefix 'result.mat']),'f');
 end
 
-function text=parameter_summary_text(parameter_smoothing)
-if strcmp(parameter_smoothing,'draws')
-    text='Retained parameter draws of V, sig2h and sig2r.';
+function text=parameter_summary_text(parameter_smoothing,inference_mode)
+if strcmp(inference_mode,'parameter_estimation')
+    text='Joint posterior draws of mu, delta=sig2h, gamma=sig2r and stochastic h/r.';
+elseif strcmp(parameter_smoothing,'draws')
+    text='Approximate cycling of retained delta=sig2h and gamma=sig2r draws; static mu resampled.';
 else
-    text='Retained-draw posterior means of V, sig2h and sig2r.';
+    text='Posterior mean innovation variances delta=sig2h and gamma=sig2r; static mu resampled.';
 end
 end
 

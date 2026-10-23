@@ -1,7 +1,7 @@
 function result=dsc_run_chains(panel,priors,cfg,run_dir)
-%DSC_RUN_CHAINS Independent, resumable chains with bounded convergence checks.
-% Retained targets and extension limits are PER CHAIN. max_seconds covers the
-% entire stage, including sequential chains, batches and diagnostic work.
+%DSC_RUN_CHAINS Run independent chains to a fixed iteration target.
+% Retained targets are per chain. max_seconds covers the entire stage,
+% including sequential chains and internal checkpoint continuation.
 started=tic;
 cfg=validate_config(cfg);
 % Do this before directories, checkpoints, estimation or pool creation.
@@ -11,12 +11,20 @@ if cfg.parallel_chains
 end
 chain_ids=cfg.chain_id+(0:cfg.num_chains-1);
 chain_dirs=cell(1,cfg.num_chains);
+chain_prefixes=cell(1,cfg.num_chains);
 for c=1:cfg.num_chains
-    if cfg.num_chains==1, chain_dirs{c}=run_dir;
-    else, chain_dirs{c}=fullfile(run_dir,'chains',sprintf('chain_%03d',c)); end
+    if cfg.flat_outputs
+        chain_dirs{c}=run_dir;
+        chain_prefixes{c}=sprintf('%schain_%03d_',cfg.file_prefix,c);
+    elseif cfg.num_chains==1
+        chain_dirs{c}=run_dir; chain_prefixes{c}=cfg.file_prefix;
+    else
+        chain_dirs{c}=fullfile(run_dir,'chains',sprintf('chain_%03d',c));
+        chain_prefixes{c}=cfg.file_prefix;
+    end
 end
-previous_seconds=0; previous_diagnostic_seconds=0;
-root_result=fullfile(run_dir,'result.mat');
+previous_seconds=0;
+root_result=fullfile(run_dir,[cfg.file_prefix 'result.mat']);
 if cfg.resume&&isfile(root_result)
     loaded=load(root_result,'result'); prior_result=loaded.result;
     if isfield(prior_result,'chain_ids')&&~isequal(prior_result.chain_ids,chain_ids)
@@ -25,9 +33,6 @@ if cfg.resume&&isfile(root_result)
     if isfield(prior_result,'stage_elapsed_seconds')
         previous_seconds=prior_result.stage_elapsed_seconds;
     end
-    if isfield(prior_result,'diagnostic_seconds')
-        previous_diagnostic_seconds=prior_result.diagnostic_seconds;
-    end
 elseif ~cfg.resume&&isfile(root_result)
     error('dsc:ExistingRun','Run directory contains a result; explicitly resume it.');
 end
@@ -35,11 +40,11 @@ sample_cfg=sampler_config(cfg);
 chain_results=cell(1,cfg.num_chains);
 checkpoint_seconds=zeros(1,cfg.num_chains);
 for c=1:cfg.num_chains
-    local_cfg=sample_cfg; local_cfg.chain_id=chain_ids(c);
+    local_cfg=sample_cfg; local_cfg.chain_id=chain_ids(c); local_cfg.file_prefix=chain_prefixes{c};
     chain_results{c}=empty_result(panel,priors,local_cfg,chain_dirs{c});
-    file=fullfile(chain_dirs{c},'result.mat');
-    checkpoint=fullfile(chain_dirs{c},'checkpoint.mat');
-    if ~cfg.resume&&(isfile(checkpoint)||~isempty(dir(fullfile(chain_dirs{c},'posterior_chunk_*.mat'))))
+    file=fullfile(chain_dirs{c},[chain_prefixes{c} 'result.mat']);
+    checkpoint=fullfile(chain_dirs{c},[chain_prefixes{c} 'checkpoint.mat']);
+    if ~cfg.resume&&(isfile(checkpoint)||~isempty(dir(fullfile(chain_dirs{c},[chain_prefixes{c} 'posterior_chunk_*.mat']))))
         error('dsc:ExistingRun','Chain %d already contains sampler output; explicitly resume it.',chain_ids(c));
     end
     if cfg.resume&&isfile(checkpoint)
@@ -69,9 +74,9 @@ if cfg.resume
     else, sampler_elapsed=sum(checkpoint_seconds); end
     % A crash can precede the stage summary; never replenish the time already
     % recorded in chain checkpoints merely because that summary is missing.
-    previous_seconds=max(previous_seconds,sampler_elapsed+previous_diagnostic_seconds);
+    previous_seconds=max(previous_seconds,sampler_elapsed);
 end
-if ~exist(run_dir,'dir'), mkdir(run_dir); end
+assert(isfolder(run_dir),'dsc:OutputDirectory','The run directory must already exist.');
 pool=[];
 if cfg.parallel_chains
     pool=gcp('nocreate');
@@ -79,153 +84,99 @@ if cfg.parallel_chains
         error('dsc:ProcessPoolRequired', ...
             'Parallel chains require a process pool; close the existing thread pool first.');
     end
-    if isempty(pool), pool=parpool('Processes',cfg.num_chains); end
+    if isempty(pool)
+        error('dsc:ParallelPoolRequired', ...
+            'Parallel chains require an existing process pool. Start it explicitly before this call or use sequential chains.');
+    end
     if pool.NumWorkers<cfg.num_chains
         error('dsc:ParallelWorkers','The process pool needs at least NumChains=%d workers.',cfg.num_chains);
     end
 end
 requested=max(0,floor((cfg.max_iterations-cfg.burnin)/cfg.thin));
-initial_iterations=cfg.max_iterations;
-counts=cellfun(@(r) r.saved_draws,chain_results);
 initial_completed=cellfun(@(r) r.completed_iterations,chain_results);
-target=min(requested,max(cfg.check_every,min(counts)+cfg.check_every));
-diagnostic_seconds=previous_diagnostic_seconds; report=struct('passed',false,'status','not_checked');
-details=struct(); stopped='iteration_limit'; failure=''; reason='';
-last_checked_counts=[];
-while true
-    iteration_target=cfg.burnin+target*cfg.thin;
-    if target==requested, iteration_target=initial_iterations; end
-    if requested==0, iteration_target=initial_iterations; end
-    iteration_target=max(1,iteration_target);
-    active=find(cellfun(@(r) r.completed_iterations<iteration_target,chain_results));
-    if remaining_seconds()<=0
-        stopped='time_limit'; reason='The cumulative stage wall-clock limit was reached.'; break
+active=find(initial_completed<cfg.max_iterations);
+if cfg.parallel_chains&&~isempty(active)&&remaining_seconds()>0
+    futures=cell(1,numel(active));
+    for k=1:numel(active)
+        c=active(k); local_cfg=chain_config(c);
+        futures{k}=parfeval(pool,@dsc_sample,1,panel,priors,local_cfg,chain_dirs{c});
     end
-    if cfg.parallel_chains&&~isempty(active)
-        futures=cell(1,numel(active));
+    try
         for k=1:numel(active)
-            c=active(k); local_cfg=batch_config(c,iteration_target);
-            futures{k}=parfeval(pool,@dsc_sample,1,panel,priors,local_cfg,chain_dirs{c});
+            chain_results{active(k)}=fetchOutputs(futures{k});
         end
-        try
-            for k=1:numel(active)
-                chain_results{active(k)}=fetchOutputs(futures{k});
-            end
-        catch problem
-            for k=1:numel(futures), cancel(futures{k}); end
-            rethrow(problem)
-        end
-    else
-        for c=active
-            if remaining_seconds()<=0, break; end
-            local_cfg=batch_config(c,iteration_target);
-            chain_results{c}=dsc_sample(panel,priors,local_cfg,chain_dirs{c});
-            if any(strcmp(chain_results{c}.status,{'failed','time_limit'})), break; end
-        end
+    catch problem
+        for k=1:numel(futures), cancel(futures{k}); end
+        rethrow(problem)
     end
-    counts=cellfun(@(r) r.saved_draws,chain_results);
-    completed=cellfun(@(r) r.completed_iterations,chain_results);
-    failed=find(cellfun(@(r) strcmp(r.status,'failed'),chain_results),1);
-    if ~isempty(failed)
-        stopped='failed'; reason=chain_results{failed}.reason;
-        failure=chain_results{failed}.failure_identifier; break
+else
+    for c=active
+        if remaining_seconds()<=0, break; end
+        local_cfg=chain_config(c);
+        chain_results{c}=dsc_sample(panel,priors,local_cfg,chain_dirs{c});
+        if any(strcmp(chain_results{c}.status,{'failed','time_limit'})), break; end
     end
-    if all(counts>=cfg.min_diagnostic_draws)&&remaining_seconds()>0
-        evaluate_diagnostics();
-    end
-    if any(completed<iteration_target)||remaining_seconds()<=0
-        stopped='time_limit'; reason='The cumulative stage wall-clock limit was reached.'; break
-    end
-    % A favorable early check never shortens the user's initial draw target.
-    if target<requested
-        target=min(requested,target+cfg.check_every); continue
-    end
-    if report.passed
-        stopped='converged'; reason='All configured convergence criteria passed.'; break
-    end
-    if ~cfg.auto_extend
-        reason='Requested iterations completed; convergence criteria have not been established.'; break
-    end
-    if target>=cfg.max_retained_draws
-        stopped='retained_draw_limit'; reason='The per-chain retained-draw cap was reached before convergence.'; break
-    end
-    target=min(cfg.max_retained_draws,target+cfg.check_every);
 end
-% Persist a diagnostic report even when zero draws or a wall cap prevented a
-% regular check. Diagnostic work cannot launch another batch after the cap.
-counts=cellfun(@(r) r.saved_draws,chain_results);
-if ~isequal(last_checked_counts,counts), evaluate_diagnostics(); end
-if isempty(reason), reason='Requested iterations completed.'; end
+failed=find(cellfun(@(r) strcmp(r.status,'failed'),chain_results),1);
+completed=cellfun(@(r) r.completed_iterations,chain_results);
+stopped='iteration_limit'; reason='Requested iterations completed.'; failure='';
+if ~isempty(failed)
+    stopped='failed'; reason=chain_results{failed}.reason;
+    failure=chain_results{failed}.failure_identifier;
+elseif any(completed<cfg.max_iterations)
+    stopped='time_limit'; reason='The cumulative stage wall-clock limit was reached.';
+end
 result=aggregate_results(chain_results,panel,priors,run_dir,chain_dirs,chain_ids);
+result.file_prefix=cfg.file_prefix; result.chain_file_prefixes=chain_prefixes;
 result.session_completed_iterations=result.completed_iterations-sum(initial_completed);
 result.status=stopped; result.reason=reason; result.failure_identifier=failure;
-result.convergence=report; result.convergence_established=logical(report.passed);
-result.convergence_details=details;
 result.num_chains=cfg.num_chains; result.parallel_chains=cfg.parallel_chains;
-result.convergence_mode=cfg.convergence_mode; result.auto_extend=cfg.auto_extend;
 result.requested_retained_draws=requested;
 result.requested_retained_draws_per_chain=requested;
-result.max_retained_draws=cfg.max_retained_draws;
 result.session_seconds=toc(started);
 result.stage_elapsed_seconds=previous_seconds+toc(started);
 result.total_seconds=result.stage_elapsed_seconds;
-result.diagnostic_seconds=diagnostic_seconds;
 result.stage_seconds.elapsed=result.stage_elapsed_seconds;
-result.stage_seconds.diagnostics=diagnostic_seconds;
-result.paths.summary=fullfile(run_dir,'pilot_summary.json');
+result.paths.summary=fullfile(run_dir,[cfg.file_prefix 'pilot_summary.json']);
 result.paths.result=root_result;
-result.paths.convergence=fullfile(run_dir,'convergence','convergence_diagnostics.json');
-summary=rmfield(result,{'chain_results','priors','dates','tickers','pair_i','pair_j','convergence_details'});
+summary=rmfield(result,{'chain_results','priors','dates','tickers','pair_i','pair_j'});
 atomic_json(result.paths.summary,summary);
 atomic_save(root_result,'result',result);
 
     function seconds=remaining_seconds()
         seconds=cfg.max_seconds-previous_seconds-toc(started);
     end
-    function local_cfg=batch_config(c,limit)
-        local_cfg=sample_cfg; local_cfg.chain_id=chain_ids(c);
-        local_cfg.max_iterations=limit;
+    function local_cfg=chain_config(c)
+        local_cfg=sample_cfg; local_cfg.chain_id=chain_ids(c); local_cfg.file_prefix=chain_prefixes{c};
         local_cfg.max_seconds=max(realmin,remaining_seconds());
-        local_cfg.resume=isfile(fullfile(chain_dirs{c},'checkpoint.mat'));
-    end
-    function evaluate_diagnostics()
-        diagnostic_clock=tic;
-        diagnostic_cfg=cfg;
-        diagnostic_cfg.diagnostic_max_seconds=max(0,remaining_seconds());
-        [report,details]=dsc_diagnose_chains(chain_dirs,diagnostic_cfg,run_dir);
-        diagnostic_seconds=diagnostic_seconds+toc(diagnostic_clock);
-        last_checked_counts=cellfun(@(r) r.saved_draws,chain_results);
+        local_cfg.resume=isfile(fullfile(chain_dirs{c},[chain_prefixes{c} 'checkpoint.mat']));
     end
 end
 
 function cfg=validate_config(cfg)
-defaults=struct('num_chains',1,'parallel_chains',false,'convergence_mode','report', ...
-    'auto_extend',false,'check_every',250,'max_retained_draws',2000, ...
-    'rhat_threshold',1.01,'min_ess',400,'max_mcse_ratio',.05, ...
-    'min_diagnostic_draws',100,'chain_id',1,'resume',false);
+defaults=struct('num_chains',1,'parallel_chains',false, ...
+    'chain_id',1,'resume',false,'flat_outputs',true,'file_prefix','');
 names=fieldnames(defaults);
 for k=1:numel(names)
     if ~isfield(cfg,names{k}), cfg.(names{k})=defaults.(names{k}); end
 end
-if isfield(cfg,'chunk_size') && isfinite(cfg.chunk_size) && cfg.chunk_size>0
-    cfg.check_every=cfg.chunk_size;
-    cfg.min_diagnostic_draws=max(6,cfg.chunk_size);
-end
-for name={'num_chains','check_every','max_retained_draws','min_diagnostic_draws','chain_id'}
+for name={'num_chains','chain_id'}
     value=cfg.(name{1});
     if ~isnumeric(value)||~isreal(value)||~isscalar(value)||~isfinite(value)||value<1||value~=floor(value)
         error('dsc:ChainConfig','%s must be a positive integer.',name{1});
     end
 end
-for name={'parallel_chains','auto_extend','resume'}
+for name={'parallel_chains','resume','flat_outputs'}
     value=cfg.(name{1});
     if ~(islogical(value)||isnumeric(value))||~isreal(value)||~isscalar(value)||~ismember(value,[0 1])
         error('dsc:ChainConfig','%s must be true or false.',name{1});
     end
     cfg.(name{1})=logical(value);
 end
-cfg.convergence_mode=validatestring(cfg.convergence_mode,{'off','report'});
-for name={'rhat_threshold','min_ess','max_mcse_ratio','max_seconds'}
+if ~isfield(cfg,'correlation_threads'), cfg.correlation_threads='auto'; end
+cfg.correlation_threads=dsc_resolve_correlation_threads( ...
+    cfg.correlation_threads,cfg.num_chains,cfg.parallel_chains);
+for name={'max_seconds'}
     value=cfg.(name{1});
     if ~isnumeric(value)||~isreal(value)||~isscalar(value)||~isfinite(value)||value<=0
         error('dsc:ChainConfig','%s must be positive and finite.',name{1});
@@ -237,22 +188,15 @@ for name={'max_iterations','burnin','thin','seed'}
         error('dsc:ChainConfig','%s must be a nonnegative integer.',name{1});
     end
 end
-if cfg.max_iterations<1||cfg.thin<1||cfg.rhat_threshold<=1|| ...
-        cfg.min_diagnostic_draws<6||cfg.seed+cfg.chain_id+cfg.num_chains-2>2^32-1
-    error('dsc:ChainConfig','Invalid iteration, thinning, R-hat threshold or chain seed.');
+if cfg.max_iterations<1||cfg.thin<1||cfg.seed+cfg.chain_id+cfg.num_chains-2>2^32-1
+    error('dsc:ChainConfig','Invalid iteration, thinning or chain seed.');
 end
-requested=max(0,floor((cfg.max_iterations-cfg.burnin)/cfg.thin));
-if cfg.auto_extend&&(cfg.max_retained_draws<requested||strcmp(cfg.convergence_mode,'off'))
-    error('dsc:ChainConfig','AutoExtend requires diagnostics and a cap at least as large as the requested per-chain target.');
-end
+
 end
 
 function cfg=sampler_config(cfg)
-% Scheduling and diagnostic choices may change on resume without changing
-% a chain's target distribution, warm-up or random sequence.
-names={'num_chains','parallel_chains','convergence_mode','auto_extend', ...
-    'check_every','max_retained_draws','rhat_threshold','min_ess', ...
-    'max_mcse_ratio','min_diagnostic_draws'};
+% Scheduling does not change a chain's target, warm-up or RNG sequence.
+names={'num_chains','parallel_chains'};
 dispersed=cfg.num_chains>1;
 cfg=rmfield(cfg,names);
 cfg.randomize_initial_state=dispersed;
@@ -263,12 +207,13 @@ function result=empty_result(panel,priors,cfg,folder)
 estimate=true; if isfield(cfg,'estimate_parameters'), estimate=cfg.estimate_parameters; end
 mode='parameter_estimation'; if ~estimate, mode='fixed_parameter_smoothing'; end
 smoothing='mean'; if isfield(cfg,'parameter_smoothing')&&~isempty(cfg.parameter_smoothing), smoothing=cfg.parameter_smoothing; end
-timing=struct('mean',0,'mean_variance',0,'correlation',0,'correlation_variance',0, ...
+timing=struct('mean',0,'correlation',0,'correlation_variance',0, ...
     'volatility',0,'volatility_variance',0,'checkpoint',0);
 result=struct('status','not_started','reason','The stage ended before this chain started.', ...
-    'failure_identifier','','convergence_established',false,'chain_id',cfg.chain_id, ...
+    'failure_identifier','','chain_id',cfg.chain_id, ...
     'seed',cfg.seed+cfg.chain_id-1,'randomize_initial_state',cfg.randomize_initial_state, ...
     'estimate_parameters',logical(estimate),'inference_mode',mode,'parameter_smoothing',smoothing, ...
+    'mean_model','constant','schema','constant_mu_v1','file_prefix',cfg.file_prefix, ...
     'parameter_draws',0,'parameter_estimate',[],'completed_iterations',0,'burnin',cfg.burnin, ...
     'saved_draws',0,'session_completed_iterations',0,'unfinished_stage','', ...
     'unfinished_sweep_seconds',0,'T',T,'m',m,'pairs',nr, ...
@@ -305,14 +250,15 @@ result.median_sweep_seconds=median(result.sweep_seconds);
 result.parameter_estimate=[];
 if result.parameter_draws>0
     m=size(panel.returns,2); nr=m*(m-1)/2;
-    estimate=struct('V',zeros(m),'sig2h',zeros(1,m),'sig2r',zeros(1,nr));
+    estimate=struct('mu',zeros(1,m),'sig2h',zeros(1,m),'sig2r',zeros(1,nr));
     for c=1:numel(chains)
         n=chains{c}.parameter_draws;
         if n==0, continue; end
-        for name={'V','sig2h','sig2r'}
+        for name={'mu','sig2h','sig2r'}
             estimate.(name{1})=estimate.(name{1})+n*chains{c}.parameter_estimate.(name{1})/result.parameter_draws;
         end
     end
+    estimate.delta=estimate.sig2h; estimate.gamma=estimate.sig2r;
     result.parameter_estimate=estimate;
 end
 result.run_dir=folder; result.priors=priors;

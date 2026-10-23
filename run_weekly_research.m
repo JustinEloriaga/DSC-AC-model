@@ -1,25 +1,65 @@
 function result = run_weekly_research(mode,cfg)
-%RUN_WEEKLY_RESEARCH Prepare/analyze, and optionally pilot the weekly model.
-% 'analysis' never starts MCMC. 'pilot' uses the bounded pilot defaults.
+%RUN_WEEKLY_RESEARCH Analyze or pilot the compact constant-mean weekly model.
+% 'analysis' never starts MCMC. 'pilot' is capped at 20 warm-up iterations
+% and 30 minutes. All outputs use existing directories; pilots use prefixes.
 if nargin<1 || isempty(mode), mode='analysis'; end
 if nargin<2 || isempty(cfg), cfg=weekly_config(); end
 mode=validatestring(mode,{'analysis','pilot'});
 root=fileparts(mfilename('fullpath'));
 addpath(fullfile(root,'toolbox'));
-if ~exist(cfg.output_root,'dir'), mkdir(cfg.output_root); end
+assert(isfolder(cfg.output_root),'dsc:OutputDirectory', ...
+    'The output directory must already exist: %s',cfg.output_root);
+if ~isfield(cfg,'mean_model'), cfg.mean_model='constant'; end
+assert(strcmp(cfg.mean_model,'constant'),'dsc:MeanModel', ...
+    'Current research runs use a constant mean; historical B/V runs are preserved separately.');
 if isfield(cfg,'data_output_dir') && strlength(string(cfg.data_output_dir)) > 0
     outdir = char(cfg.data_output_dir);
 else
-    outdir = fullfile(cfg.output_root,'data');
+    outdir = cfg.output_root;
 end
-if ~exist(outdir,'dir'), mkdir(outdir); end
+assert(isfolder(outdir),'dsc:OutputDirectory', ...
+    'The data output directory must already exist: %s',outdir);
+% The analysis helper receives an existing directory, so it cannot take its
+% historical branch that creates output_root/data.
+cfg.data_output_dir=outdir;
+if strcmp(mode,'pilot')
+    cfg.flat_outputs=true;
+    if ~isfield(cfg,'file_prefix')||isempty(cfg.file_prefix)
+        assert(~isfield(cfg,'resume')||~cfg.resume,'dsc:ResumePrefix', ...
+            'Resume requires the original pilot filename prefix.');
+        stamp=char(datetime('now','TimeZone','Europe/Madrid','Format','yyyyMMdd''T''HHmmssSSS'));
+        cfg.file_prefix=['pilot_constant_mu_' stamp '_'];
+    end
+    assert(~isempty(regexp(char(cfg.file_prefix),'^[A-Za-z0-9_-]+$','once')), ...
+        'dsc:OutputPrefix','Pilot filename prefixes may contain only letters, numbers, underscores and hyphens.');
+end
 panel=prepare_weekly_panel(cfg);
 [priors,inference]=dsc_prepare_inference(panel,cfg);
+if strcmp(mode,'pilot')
+    % This bounded pilot invokes a single sampler, not the chain coordinator.
+    % Internal continuation uses the already resolved numeric allocation.
+    if isfield(cfg,'resume')&&cfg.resume
+        requested=cfg.correlation_threads;
+        if (ischar(requested)||isstring(requested))&&isequal(string(requested),"auto")
+            checkpoint_path=fullfile(cfg.output_root,[cfg.file_prefix 'checkpoint.mat']);
+            if ~isfile(checkpoint_path), error('dsc:ResumeMissing','Checkpoint does not exist.'); end
+            loaded=load(checkpoint_path,'checkpoint');
+            requested=loaded.checkpoint.identity.cfg.correlation_threads;
+        end
+        cfg.correlation_threads=dsc_resolve_correlation_threads(requested,1,false);
+    else
+        cfg.correlation_threads=dsc_resolve_correlation_threads( ...
+            cfg.correlation_threads,1,false,inference.training_panel,priors,cfg.correlation_backend);
+    end
+end
 summary=analyze_weekly_panel(panel,cfg);
 save(fullfile(outdir,'calibrated_priors.mat'),'priors','cfg','-v7.3');
 write_json(fullfile(outdir,'prior_summary.json'),priors);
 % Manifest schema version, independent of the saved-parameter schema.
 manifest.schema_version=1;
+manifest.model='joint_dsc_constant_mean';
+manifest.mean_model='constant';
+manifest.innovation_variances='delta = sig2h, gamma = sig2r; both estimated';
 manifest.source_file=cfg.source_file;
 manifest.source_hash=panel.source_hash;
 manifest.raw_start=char(string(panel.raw_dates(1),'yyyy-MM-dd'));
@@ -52,12 +92,10 @@ if strcmp(mode,'pilot')
     if ~inference.estimate_parameters||inference.training_panel.dates(end)~=panel.dates(end)
         error('dsc:PilotMode','Use run_weekly_model_report for saved-parameter smoothing or cutoff estimation.');
     end
-    run_dir=dsc_create_timestamped_directory(fullfile(cfg.output_root,'runs'),'', ...
-        ['-chain' num2str(cfg.chain_id)]);
-    write_json(fullfile(run_dir,'run_manifest.json'),manifest);
+    run_dir=cfg.output_root;
+    write_json(fullfile(run_dir,[cfg.file_prefix 'run_manifest.json']),manifest);
     result.pilot=run_weekly_pilot(inference.training_panel,priors,cfg,run_dir);
-    write_json(fullfile(run_dir,'prior_summary.json'),priors);
-    write_json(fullfile(cfg.output_root,'latest_pilot.json'),result.pilot);
+    write_json(fullfile(run_dir,[cfg.file_prefix 'prior_summary.json']),priors);
 end
 end
 

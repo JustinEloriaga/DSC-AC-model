@@ -11,15 +11,32 @@ if ~is_text_scalar(parameter_dir)
 end
 parameter_dir=char(parameter_dir);
 if isempty(explicit_file)||(isstring(explicit_file)&&isscalar(explicit_file)&&strlength(explicit_file)==0)
-    files=dir(fullfile(parameter_dir,'parameters_*.mat'));
+    files=dir(fullfile(parameter_dir,'*_parameters.mat'));
     files=files(~[files.isdir]);
+    files=files(~contains({files.name},'pending'));
     if isempty(files)
-        error('dsc:ParametersMissing','No parameters_<run-id>.mat files exist in %s. Estimate parameters first or choose an explicit parameter file.',parameter_dir);
+        error('dsc:ParametersMissing','No prefixed *_parameters.mat files exist in %s. Estimate parameters first or choose an explicit parameter file.',parameter_dir);
     end
     latest=-Inf; bundle=[]; path='';
     for k=1:numel(files)
         candidate_path=fullfile(files(k).folder,files(k).name);
         candidate=read_candidate(candidate_path);
+        if isfield(candidate,'storage')&&strcmp(candidate.storage,'conditional_parameter_summary_v1'), continue; end
+        % Historical dynamic-mean bundles remain untouched and cannot be
+        % selected for this constant-mean model. Other panels are separate fits.
+        if legacy_mean_model(candidate), continue; end
+        if isfield(candidate,'tickers')&&isfield(panel,'tickers')&& ...
+                ~isequal(string(candidate.tickers(:)),string(panel.tickers(:))), continue; end
+        try
+            candidate=expand_report(candidate,panel,candidate_path);
+        catch problem
+            % Discovery may encounter earlier fits of a revised history.
+            % Only a history mismatch makes a healthy report ineligible;
+            % malformed reports and missing artifacts must remain visible.
+            if strcmp(problem.identifier,'dsc:ParametersHistory'), continue; end
+            rethrow(problem);
+        end
+        validate_bundle(candidate,candidate_path);
         if ~isfield(candidate,'estimated_at_posix')||~finite_scalar(candidate.estimated_at_posix)
             error('dsc:ParametersCorrupt','Cannot determine estimation time of parameter file %s. Choose an explicit valid file.',candidate_path);
         end
@@ -27,6 +44,9 @@ if isempty(explicit_file)||(isstring(explicit_file)&&isscalar(explicit_file)&&st
         if candidate.estimated_at_posix>=latest
             latest=candidate.estimated_at_posix; bundle=candidate; path=candidate_path;
         end
+    end
+    if isempty(bundle)
+        error('dsc:ParametersMissing','No compatible constant-mean parameter file exists for the current series in %s. Estimate this model first.',parameter_dir);
     end
 else
     if ~is_text_scalar(explicit_file)
@@ -36,21 +56,22 @@ else
     if ~isfile(path), path=fullfile(parameter_dir,path); end
     if ~isfile(path), error('dsc:ParametersMissing','Parameter file does not exist: %s',path); end
     bundle=read_candidate(path);
+    if isfield(bundle,'storage')&&strcmp(bundle.storage,'conditional_parameter_summary_v1')
+        error('dsc:ParametersFixedMode','File %s reports fixed-parameter smoothing; reuse its source_parameter_file instead.',path);
+    end
+    bundle=expand_report(bundle,panel,path);
 end
 path=char(java.io.File(path).getCanonicalPath());
 validate_bundle(bundle,path);
 validate_panel(bundle,panel,path);
-if bundle.schema_version==3
-    bundle.convergence=struct('status','not_checked','passed',false, ...
-        'reason','Legacy schema 3 did not compute convergence diagnostics.');
-end
-bundle.parameter_estimate.sig2h=bundle.parameter_estimate.sig2h(:)';
-bundle.parameter_estimate.sig2r=bundle.parameter_estimate.sig2r(:)';
+bundle.parameter_estimate.mu=double(bundle.parameter_estimate.mu(:)');
+bundle.parameter_estimate.sig2h=double(bundle.parameter_estimate.sig2h(:)');
+bundle.parameter_estimate.sig2r=double(bundle.parameter_estimate.sig2r(:)');
+bundle.parameter_estimate.delta=bundle.parameter_estimate.sig2h;
+bundle.parameter_estimate.gamma=bundle.parameter_estimate.sig2r;
+bundle.parameter_draws.mu=double(bundle.parameter_draws.mu);
 bundle.parameter_draws.sig2h=double(bundle.parameter_draws.sig2h);
 bundle.parameter_draws.sig2r=double(bundle.parameter_draws.sig2r);
-for d=1:size(bundle.parameter_draws.V,3)
-    bundle.parameter_draws.V(:,:,d)=(double(bundle.parameter_draws.V(:,:,d))+double(bundle.parameter_draws.V(:,:,d))')/2;
-end
 bundle.path=path;
 end
 
@@ -63,29 +84,124 @@ end
 if ~isfield(loaded,'parameters')||~isstruct(loaded.parameters)||~isscalar(loaded.parameters)
     error('dsc:ParametersCorrupt','File %s has no scalar parameters bundle. Checkpoints and legacy MAT files cannot be reused as parameter estimates.',path);
 end
-value=loaded.parameters;
+value=without_legacy_chain_statistics(loaded.parameters);
+end
+
+function b=expand_report(b,panel,path)
+% Final reports store parameter draws once, in their original joint chunks.
+if ~isfield(b,'storage')||~strcmp(b.storage,'parameter_report_v1'), return; end
+required={'manifest_file','parameter_chunk_files','prior_manifest_section', ...
+    'calibration_sample_sha256', ...
+    'training_sample_sha256','calibration_weeks','training_dates','tickers', ...
+    'pair_i','pair_j','retained_draws','chain_ids','retained_draws_per_chain'};
+if ~all(isfield(b,required))
+    error('dsc:ParametersSchema','Incomplete parameter report in %s.',path);
+end
+if ~isstruct(panel)||~all(isfield(panel,{'dates','returns','observation_mask','tickers','pair_i','pair_j'}))|| ...
+        ~isequal(string(panel.tickers(:)),string(b.tickers(:)))|| ...
+        ~isequal(panel.pair_i(:),b.pair_i(:))||~isequal(panel.pair_j(:),b.pair_j(:))
+    error('dsc:ParametersIdentity','A matching full weekly panel is required to expand %s.',path);
+end
+c=b.calibration_weeks; n=numel(b.training_dates);
+if ~finite_scalar(c)||c<1||c~=floor(c)||numel(panel.dates)<c+n
+    error('dsc:ParametersHistory','Current panel is shorter than the saved estimation history in %s.',path);
+end
+cal=sample_block(panel,1:c); train=sample_block(panel,c+(1:n));
+if ~strcmp(dsc_sample_fingerprint(cal),b.calibration_sample_sha256)|| ...
+        ~strcmp(dsc_sample_fingerprint(train),b.training_sample_sha256)
+    error('dsc:ParametersHistory','Calibration or estimation history has changed since %s.',path);
+end
+b.calibration_returns=cal.returns; b.calibration_mask=logical(cal.observation_mask);
+b.training_returns=train.returns; b.training_mask=logical(train.observation_mask);
+try
+    manifest=jsondecode(fileread(b.manifest_file));
+    section=char(b.prior_manifest_section);
+    if strcmp(section,'priors'), p=manifest.priors;
+    elseif strcmp(section,'parameter_estimation'), p=manifest.parameter_estimation.priors;
+    else, error('dsc:ParametersSchema','Unknown prior manifest section.'); end
+    p.tickers=b.tickers;
+    for name={'mu0','mh0','mr0'}, p.(name{1})=p.(name{1})(:); end
+    for name={'initial_dates','calibration_dates','likelihood_start_date'}
+        if isfield(p,name{1})
+            p.(name{1})=datetime(string(p.(name{1})),'InputFormat','yyyy-MM-dd');
+            p.(name{1})=p.(name{1})(:);
+        end
+    end
+    b.priors=p;
+catch problem
+    error('dsc:ParametersCorrupt','Cannot expand parameter report %s: %s',path,problem.message);
+end
+b.parameter_draws=report_draws(b,path);
+end
+
+function block=sample_block(panel,rows)
+block=struct('dates',panel.dates(rows),'returns',panel.returns(rows,:), ...
+    'observation_mask',panel.observation_mask(rows,:),'tickers',panel.tickers, ...
+    'pair_i',panel.pair_i,'pair_j',panel.pair_j);
+end
+
+function draws=report_draws(b,path)
+m=numel(b.tickers); q=numel(b.pair_i); N=b.retained_draws; T=numel(b.training_dates);
+if ~finite_scalar(N)||N<2||N~=floor(N)|| ...
+        ~(iscellstr(b.parameter_chunk_files)||isstring(b.parameter_chunk_files))
+    error('dsc:ParametersDraws','Invalid retained draw metadata in %s.',path);
+end
+files=cellstr(b.parameter_chunk_files);
+if isempty(files)||numel(unique(files))~=numel(files)
+    error('dsc:ParametersDraws','Missing or repeated chunk references in %s.',path);
+end
+draws=struct('mu',zeros(N,m),'sig2h',zeros(N,m),'sig2r',zeros(N,q), ...
+    'chain_id',zeros(N,1),'iteration',zeros(N,1));
+offset=0;
+for k=1:numel(files)
+    try
+        loaded=load(files{k},'chunk'); ch=loaded.chunk;
+    catch problem
+        error('dsc:ParametersDraws','Cannot read joint chunk %s: %s',files{k},problem.message);
+    end
+    required={'schema','mu','sig2h','sig2r','h','P_pairs','iterations','chain_id', ...
+        'dates','tickers','pair_i','pair_j'};
+    if ~isstruct(ch)||~isscalar(ch)||~all(isfield(ch,required))
+        error('dsc:ParametersDraws','Incomplete joint posterior chunk %s.',files{k});
+    end
+    count=numel(ch.iterations);
+    if ~strcmp(ch.schema,'constant_mu_v1')||count<1||offset+count>N|| ...
+            ~finite_scalar(ch.chain_id)||~ismember(ch.chain_id,b.chain_ids)|| ...
+            ~isequal(ch.dates,b.training_dates)|| ...
+            ~isequal(string(ch.tickers(:)),string(b.tickers(:)))|| ...
+            ~isequal(ch.pair_i(:),b.pair_i(:))||~isequal(ch.pair_j(:),b.pair_j(:))|| ...
+            ~isequal(size(ch.mu),[count m])||~isequal(size(ch.sig2h),[count m])|| ...
+            ~isequal(size(ch.sig2r),[count q])|| ...
+            size(ch.h,1)~=T||size(ch.h,2)~=m||size(ch.h,3)~=count|| ...
+            size(ch.P_pairs,1)~=T||size(ch.P_pairs,2)~=q||size(ch.P_pairs,3)~=count
+        error('dsc:ParametersDraws','Invalid joint draw dimensions or identity in %s.',files{k});
+    end
+    rows=offset+(1:count);
+    draws.mu(rows,:)=ch.mu; draws.sig2h(rows,:)=ch.sig2h; draws.sig2r(rows,:)=ch.sig2r;
+    draws.chain_id(rows)=ch.chain_id; draws.iteration(rows)=ch.iterations(:);
+    offset=offset+count;
+end
+if offset~=N
+    error('dsc:ParametersDraws','Joint chunk count differs from report %s.',path);
+end
 end
 
 function validate_bundle(b,path)
-if isfield(b,'schema_version')&&isequal(b.schema_version,1)
-    error('dsc:ParametersLegacyCalibration', ...
-        ['Parameter file %s uses schema 1, whose model included calibration weeks in the likelihood. ' ...
-         'Re-estimate parameters with the calibration weeks excluded before smoothing.'],path);
-end
-if isfield(b,'schema_version')&&isequal(b.schema_version,2)
-    error('dsc:ParametersLegacyDraws', ...
-        ['Parameter file %s stores posterior means only. Re-estimate parameters to save retained ' ...
-         'parameter draws before smoothing with this interface.'],path);
+if legacy_mean_model(b)
+    error('dsc:ParametersMeanModel', ...
+        'Parameter file %s belongs to the historical dynamic-mean model. Re-estimate the constant-mean model before smoothing.',path);
 end
 required={'schema_version','model','estimator','estimated_at','estimated_at_posix', ...
     'estimation_start','estimation_end','tickers','pair_i','pair_j','source_hash', ...
     'calibration_dates','calibration_returns','calibration_mask','calibration_weeks','calibration_start','calibration_end', ...
     'training_dates','training_returns','training_mask','priors','parameter_draws','parameter_estimate', ...
-    'retained_draws','convergence_established','run_dir','estimation_config'};
+    'retained_draws','run_dir','file_prefix','estimation_config', ...
+    'mean_model','innovation_variance_aliases'};
 if ~all(isfield(b,required))
     error('dsc:ParametersSchema','Parameter file %s is missing required metadata.',path);
 end
-if ~ismember(b.schema_version,[3 4])||~strcmp(b.model,'joint_dsc_p0')||~strcmp(b.estimator,'posterior_draws')
+if ~isequal(b.schema_version,5)||~strcmp(b.model,'joint_dsc_constant_mean')|| ...
+        ~strcmp(b.mean_model,'constant')||~strcmp(b.estimator,'posterior_draws')
     error('dsc:ParametersSchema','Unsupported parameter schema, model or estimator in %s.',path);
 end
 if ~finite_scalar(b.estimated_at_posix)||~is_text_scalar(b.estimated_at)|| ...
@@ -133,45 +249,41 @@ if ~is_text_scalar(b.source_hash)||~is_text_scalar(b.run_dir)|| ...
         ~isfield(b.estimation_config,'prior_weeks')||~isequal(b.estimation_config.prior_weeks,b.calibration_weeks)
     error('dsc:ParametersSchema','Invalid source or configuration metadata in %s.',path);
 end
-if isfield(b,'run_id')
-    [run_parent,run_name]=fileparts(char(b.run_dir)); %#ok<ASGLU>
-    if strcmp(run_name,'estimation')
-        [~,run_name]=fileparts(run_parent);
-    end
-    if ~is_text_scalar(b.run_id)||~strcmp(char(b.run_id),run_name)
-        error('dsc:ParametersSchema','Run ID does not match the source run directory in %s.',path);
-    end
+if ~((ischar(b.file_prefix)&&isrow(b.file_prefix))||isempty(b.file_prefix))|| ...
+        (~isempty(b.file_prefix)&&isempty(regexp(b.file_prefix,'^[A-Za-z0-9_-]+$','once')))
+    error('dsc:ParametersSchema','Invalid run or filename prefix metadata in %s.',path);
 end
+[run_parent,run_name]=fileparts(char(b.run_dir));
+if strcmp(run_name,'estimation'), [~,run_name]=fileparts(run_parent); end
+if ~isempty(b.file_prefix), run_name=regexprep(b.file_prefix,'_+$',''); end
 if ~finite_scalar(b.retained_draws)||b.retained_draws<2||b.retained_draws~=floor(b.retained_draws)
     error('dsc:ParametersDraws','Parameter file %s does not contain an estimate from at least two retained draws.',path);
 end
-if b.schema_version==3&&~isequal(b.convergence_established,false)
-    error('dsc:ParametersSchema','Schema 3 does not establish convergence; invalid convergence metadata in %s.',path);
-end
 v=b.parameter_estimate;
-if ~isstruct(v)||~isscalar(v)||~all(isfield(v,{'V','sig2h','sig2r'}))|| ...
-        ~positive_covariance(v.V,m)||~positive_vector(v.sig2h,m)||~positive_vector(v.sig2r,nr)
-    error('dsc:ParametersValues','Parameter file %s must contain a positive-definite V and positive finite innovation variances.',path);
+if ~isstruct(v)||~isscalar(v)||~all(isfield(v,{'mu','sig2h','sig2r','delta','gamma'}))|| ...
+        isfield(v,'B')||isfield(v,'V')|| ...
+        ~finite_vector(v.mu,m)||~positive_vector(v.sig2h,m)||~positive_vector(v.sig2r,nr)|| ...
+        ~isequal(v.delta(:),v.sig2h(:))||~isequal(v.gamma(:),v.sig2r(:))|| ...
+        ~isequal(b.innovation_variance_aliases,struct('delta','sig2h','gamma','sig2r'))
+    error('dsc:ParametersValues','Parameter file %s must contain a finite constant mean and positive innovation variances with matching aliases.',path);
 end
 draws=b.parameter_draws;
 if ~valid_parameter_draws(draws,m,nr,b.retained_draws)
-    error('dsc:ParametersValues','Parameter file %s must contain retained positive parameter draws.',path);
+    error('dsc:ParametersValues','Parameter file %s must contain retained finite mean and positive innovation-variance draws.',path);
 end
-if b.schema_version==4
-    validate_chain_provenance(b,path);
-end
-draw_mean=struct('V',mean(draws.V,3),'sig2h',mean(draws.sig2h,1),'sig2r',mean(draws.sig2r,1));
-if max(abs(draw_mean.V(:)-v.V(:)))>1e-10|| ...
+validate_chain_provenance(b,path);
+draw_mean=struct('mu',mean(draws.mu,1),'sig2h',mean(draws.sig2h,1),'sig2r',mean(draws.sig2r,1));
+if max(abs(draw_mean.mu(:)-v.mu(:)))>1e-10|| ...
         max(abs(draw_mean.sig2h(:)-v.sig2h(:)))>1e-10|| ...
         max(abs(draw_mean.sig2r(:)-v.sig2r(:)))>1e-10
     error('dsc:ParametersValues','Parameter means must equal the average of retained draws in %s.',path);
 end
 p=b.priors;
-prior_fields={'Bbar','VBbar','nuB','V0B','mh0','mr0','h0_scale','r0_scale', ...
+prior_fields={'mu0','mu_cov0','mh0','mr0','h0_scale','r0_scale', ...
     'sig2h_mean','sig2r_mean','ig_shape','ig_scale_h','ig_scale_r','source_hash','tickers'};
 if ~isstruct(p)||~isscalar(p)||~all(isfield(p,prior_fields))|| ...
-        ~finite_vector(p.Bbar,m)||~positive_covariance(p.VBbar,m)|| ...
-        ~positive_covariance(p.V0B,m)||~finite_scalar(p.nuB)||p.nuB<=m+1|| ...
+        ~finite_vector(p.mu0,m)||~positive_covariance(p.mu_cov0,m)|| ...
+        any(isfield(p,{'Bbar','VBbar','V0B','nuB'}))|| ...
         ~finite_vector(p.mh0,m)||~finite_vector(p.mr0,nr)|| ...
         ~positive_vector(p.h0_scale,1)||~positive_vector(p.r0_scale,1)|| ...
         ~positive_vector(p.sig2h_mean,1)||~positive_vector(p.sig2r_mean,1)|| ...
@@ -187,9 +299,20 @@ end
 end
 
 function validate_chain_provenance(b,path)
-fields={'chain_ids','chain_seeds','chain_dirs','retained_draws_per_chain','convergence'};
+fields={'chain_ids','chain_seeds','chain_dirs','chain_file_prefixes','retained_draws_per_chain'};
 if ~all(isfield(b,fields))||~all(isfield(b.parameter_draws,{'chain_id','iteration'}))
-    error('dsc:ParametersSchema','Missing chain or diagnostic provenance in %s.',path);
+    error('dsc:ParametersSchema','Missing chain or draw provenance in %s.',path);
+end
+if ~(iscellstr(b.chain_dirs)||(isstring(b.chain_dirs)&&isvector(b.chain_dirs)))|| ...
+        ~(iscellstr(b.chain_file_prefixes)||(isstring(b.chain_file_prefixes)&&isvector(b.chain_file_prefixes)))|| ...
+        any(ismissing(string(b.chain_dirs)))||any(strlength(string(b.chain_dirs))==0)|| ...
+        any(ismissing(string(b.chain_file_prefixes)))
+    error('dsc:ParametersIdentity','Invalid source chain directory/prefix metadata in %s.',path);
+end
+for prefix=string(b.chain_file_prefixes(:))'
+    if strlength(prefix)>0&&isempty(regexp(char(prefix),'^[A-Za-z0-9_-]+$','once'))
+        error('dsc:ParametersIdentity','Invalid source chain filename prefix in %s.',path);
+    end
 end
 ids=b.chain_ids(:); counts=b.retained_draws_per_chain(:); seeds=b.chain_seeds(:);
 if isempty(ids)||~finite_vector(ids,numel(ids))||any(ids<1)||any(ids~=floor(ids))|| ...
@@ -197,7 +320,8 @@ if isempty(ids)||~finite_vector(ids,numel(ids))||any(ids<1)||any(ids~=floor(ids)
         any(counts<1)||any(counts~=floor(counts))||sum(counts)~=b.retained_draws|| ...
         ~finite_vector(seeds,numel(ids))||any(seeds<0)||any(seeds>2^32-1)|| ...
         any(seeds~=floor(seeds))||numel(unique(seeds))~=numel(seeds)|| ...
-        numel(b.chain_dirs)~=numel(ids)||numel(unique(string(b.chain_dirs)))~=numel(ids)
+        numel(b.chain_dirs)~=numel(ids)||numel(b.chain_file_prefixes)~=numel(ids)|| ...
+        numel(unique(strcat(string(b.chain_dirs(:)),filesep,string(b.chain_file_prefixes(:)))))~=numel(ids)
     error('dsc:ParametersIdentity','Invalid original chain identities/counts in %s.',path);
 end
 cfg=b.estimation_config;
@@ -235,11 +359,28 @@ for c=1:numel(ids)
         error('dsc:ParametersIdentity','Invalid per-chain retention sequence in %s.',path);
     end
 end
-m=numel(b.tickers); nr=m*(m-1)/2;
-expected_quantities=numel(b.training_dates)*(m+nr);
-dsc_validate_convergence(b.convergence,ids,counts,expected_quantities);
-if ~isequal(b.convergence_established,b.convergence.passed)
-    error('dsc:ConvergenceMetadata','Parameter convergence flag disagrees with its diagnostic report.');
+end
+
+function b=without_legacy_chain_statistics(b)
+% Older parameter files remain reusable without their diagnostic sidecars.
+b=remove_fields(b,{'convergence','convergence_established','convergence_file','convergence_section'});
+if isfield(b,'estimation_config')
+    b.estimation_config=remove_fields(b.estimation_config, ...
+        {'convergence_mode','auto_extend','check_every','max_retained_draws', ...
+        'rhat_threshold','min_ess','max_mcse_ratio','min_diagnostic_draws'});
+end
+if isfield(b,'parameter_summary_metadata')
+    b.parameter_summary_metadata=remove_fields(b.parameter_summary_metadata,{'convergence_established'});
+    if isfield(b.parameter_summary_metadata,'posterior_std_convention')
+        b.parameter_summary_metadata.posterior_std_convention='Sample standard deviation with n-1 denominator.';
+    end
+end
+end
+
+function value=remove_fields(value,names)
+if isstruct(value)
+    present=intersect(fieldnames(value),names);
+    if ~isempty(present), value=rmfield(value,present); end
 end
 end
 
@@ -307,16 +448,21 @@ if tf, [~,bad]=chol((value+value')/2); tf=bad==0; end
 end
 
 function tf=valid_parameter_draws(draws,m,nr,n)
-tf=isstruct(draws)&&isscalar(draws)&&all(isfield(draws,{'V','sig2h','sig2r'}))&& ...
-    isnumeric(draws.V)&&isreal(draws.V)&&isequal(size(draws.V),[m m n])&& ...
+tf=isstruct(draws)&&isscalar(draws)&&all(isfield(draws,{'mu','sig2h','sig2r'}))&& ...
+    ~isfield(draws,'B')&&~isfield(draws,'V')&& ...
+    isnumeric(draws.mu)&&isreal(draws.mu)&&isequal(size(draws.mu),[n m])&& ...
     isnumeric(draws.sig2h)&&isreal(draws.sig2h)&&isequal(size(draws.sig2h),[n m])&& ...
     isnumeric(draws.sig2r)&&isreal(draws.sig2r)&&isequal(size(draws.sig2r),[n nr])&& ...
-    all(isfinite(draws.V(:)))&&all(isfinite(draws.sig2h(:)))&&all(draws.sig2h(:)>0)&& ...
+    all(isfinite(draws.mu(:)))&&all(isfinite(draws.sig2h(:)))&&all(draws.sig2h(:)>0)&& ...
     all(isfinite(draws.sig2r(:)))&&all(draws.sig2r(:)>0);
-if ~tf, return; end
-for d=1:n
-    if ~positive_covariance(draws.V(:,:,d),m), tf=false; return; end
 end
+
+function tf=legacy_mean_model(b)
+tf=(isfield(b,'schema_version')&&isnumeric(b.schema_version)&&isscalar(b.schema_version)&& ...
+    ismember(b.schema_version,1:4))|| ...
+    (isfield(b,'model')&&strcmp(b.model,'joint_dsc_p0'))|| ...
+    (isfield(b,'parameter_estimate')&&isstruct(b.parameter_estimate)&& ...
+    (isfield(b.parameter_estimate,'V')||isfield(b.parameter_estimate,'B')));
 end
 
 function tf=is_text_scalar(value)

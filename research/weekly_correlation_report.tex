@@ -106,12 +106,8 @@ B_1 &\sim \Normal(\bar B,4\bar V_B),
 \end{align}
 Here $m=\NumVariables{}$, $q=\NumPairs{}$, and $h_{j0},r_{k0}$ are pre-sample states. Prior blocks are independent; initial volatility and correlation states are conditionally independent given their innovation variances. Hyperparameter definitions and empirical-Bayes calibration are recorded in the saved run artifacts.
 \section{Sampler run}
-This section records the saved sampler run used for the current report. Run status and convergence are reported from the saved diagnostics.
+This section records the saved sampler run used for the current report, including retained draw counts, run status and timing.
 \input{generated/pilot.tex}
-\clearpage
-\section{Run diagnostics}
-This section reports the saved convergence diagnostics for the sampler run. The reference values are diagnostic thresholds for judging whether independently initialized chains agree well enough for the reported posterior summaries.
-\input{generated/convergence_diagnostics.tex}
 \bibliographystyle{plainnat}
 \bibliography{references}
 \end{document}

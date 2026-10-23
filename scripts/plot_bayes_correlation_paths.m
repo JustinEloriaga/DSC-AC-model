@@ -1,5 +1,5 @@
-function figure_paths = plot_bayes_correlation_paths(run_dir)
-%PLOT_BAYES_CORRELATION_PATHS Plot short-run Bayesian P(i,j,t) paths.
+function [figure_paths,plot_summary] = plot_bayes_correlation_paths(run_dir,file_prefix)
+%PLOT_BAYES_CORRELATION_PATHS Plot pooled and chain-specific P(i,j,t) means.
 % Pools retained post-warm-up draws while preserving original chain identity.
 % Uses direct chunks or the coordinator summary's chain_dirs. The colored
 % vertical bands use Figure 1's continuous red-white-blue correlation scale.
@@ -7,14 +7,35 @@ if nargin<1 || strlength(string(run_dir))==0
     error('DSC:RunDir','Provide a sampler run directory.');
 end
 run_dir = char(run_dir);
-summary_path = fullfile(run_dir,'pilot_summary.json');
-if exist(summary_path,'file')
+if ~isfolder(run_dir), error('DSC:RunDir','Provide an existing sampler run directory.'); end
+if nargin<2, file_prefix=''; end
+file_prefix=validate_file_prefix(file_prefix);
+summary_path = fullfile(run_dir,[file_prefix 'pilot_summary.json']);
+result_path=fullfile(run_dir,[file_prefix 'result.mat']);
+if isfile(result_path)
+    loaded=load(result_path,'result');
+    if ~isfield(loaded,'result')||~isstruct(loaded.result)||~isscalar(loaded.result)
+        error('DSC:PathIdentity','The saved sampler result is invalid.');
+    end
+    run_summary=loaded.result;
+elseif exist(summary_path,'file')
     run_summary = jsondecode(fileread(summary_path));
 else
     run_summary=struct();
+    manifest_path=fullfile(run_dir,[file_prefix 'run_manifest.json']);
+    if isfile(manifest_path)
+        manifest=jsondecode(fileread(manifest_path));
+        if isfield(manifest,'run_summary')
+            if ~isstruct(manifest.run_summary)||~isscalar(manifest.run_summary)
+                error('DSC:PathIdentity','The manifest run summary is invalid.');
+            end
+            run_summary=manifest.run_summary;
+            run_summary.final_output_schema='joint_outputs_v1';
+        end
+    end
 end
 [P,identity,iterations,draw_chain_ids,chain_dirs,chain_ids,retained_draws_per_chain]= ...
-    read_chain_draws(run_dir,run_summary);
+    read_chain_draws(run_dir,run_summary,file_prefix);
 if size(P,3)<2, error('DSC:TooFewDraws','At least two retained draws are needed.'); end
 dates=identity.dates; tickers=string(identity.tickers);
 pair_i=identity.pair_i; pair_j=identity.pair_j;
@@ -30,74 +51,55 @@ if ~isnumeric(warmup)||~isscalar(warmup)||~isfinite(warmup)||warmup<0||warmup~=f
     error('DSC:PathDraws','Retained iterations or draw count disagree with the sampler summary.');
 end
 warmup_per_chain=repmat(warmup,1,numel(chain_ids));
-convergence_established=false;
-if isfield(run_summary,'convergence_established')
-    flag=run_summary.convergence_established;
-    if ~isscalar(flag)||~(islogical(flag)||isnumeric(flag))||~ismember(flag,[0 1])
-        error('DSC:ConvergenceMetadata','Invalid convergence-established flag in the run summary.');
-    end
-    convergence_established=logical(run_summary.convergence_established);
+q=prctile(P,[16 84],3);
+lower=q(:,:,1); mean_path=mean(P,3); upper=q(:,:,2);
+chain_means=zeros(size(P,1),size(P,2),numel(chain_ids),'like',P);
+for c=1:numel(chain_ids)
+    chain_means(:,:,c)=mean(P(:,:,draw_chain_ids==chain_ids(c)),3);
 end
-q=prctile(P,[16 50 84],3);
-lower=q(:,:,1); median_path=q(:,:,2); upper=q(:,:,3);
-inference=read_inference(run_dir,dates,run_summary);
+inference=read_inference(run_dir,dates,run_summary,file_prefix);
 if ~isempty(inference)&& ...
         ((isfield(inference,'num_chains')&&inference.num_chains~=numel(chain_ids))|| ...
         (isfield(inference,'retained_draws_per_chain')&& ...
         ~isequal(inference.retained_draws_per_chain(:),retained_draws_per_chain(:))))
     error('DSC:InferenceMetadata','Inference chain counts disagree with the saved posterior draws.');
 end
-validate_plot_convergence(run_dir,run_summary,chain_ids,retained_draws_per_chain, ...
-    numel(dates),numel(tickers),convergence_established);
 draw_note=sprintf('%d pooled retained draws from %d chain(s) | %d warm-up iterations removed per chain', ...
     size(P,3),numel(chain_ids),warmup);
 
 fig_dir = fullfile(run_dir,'figures');
-if ~exist(fig_dir,'dir'), mkdir(fig_dir); end
-save(fullfile(run_dir,'posterior_correlation_bands.mat'), ...
-    'lower','median_path','upper','dates','tickers','pair_i','pair_j','iterations','inference', ...
-    'draw_chain_ids','chain_ids','chain_dirs','retained_draws_per_chain','warmup_per_chain','-v7.3');
+if is_final_compact_output(run_summary)||~isfolder(fig_dir), fig_dir=run_dir; end
+if ~is_final_compact_output(run_summary)
+    save(fullfile(run_dir,[file_prefix 'posterior_correlation_bands.mat']), ...
+        'lower','mean_path','upper','dates','tickers','pair_i','pair_j','iterations','inference', ...
+        'draw_chain_ids','chain_ids','chain_dirs','retained_draws_per_chain','warmup_per_chain','-v7.3');
+end
 
 pair_labels = erase(tickers(pair_i)," Index") + " / " + erase(tickers(pair_j)," Index");
 pages = ceil(numel(pair_labels)/9);
-figure_paths = strings(pages,1);
+figure_paths = string(fullfile(fig_dir,[file_prefix 'correlation_paths.pdf']));
+if numel(chain_ids)>1
+    figure_paths(2,1)=string(fullfile(fig_dir,[file_prefix 'convergence_correlation_paths.pdf']));
+end
+plot_summary=struct('pooled_mean',mean_path,'lower',lower,'upper',upper, ...
+    'chain_means',chain_means,'chain_ids',chain_ids, ...
+    'retained_draws_per_chain',retained_draws_per_chain);
 
 for page = 1:pages
     ix = (page-1)*9 + (1:9);
     ix = ix(ix<=numel(pair_labels));
-    figure_paths(page) = plot_page(fullfile(fig_dir,sprintf('bayes_correlation_paths_all_%02d.pdf',page)), ...
-        dates, median_path, lower, upper, pair_labels, ix, ...
-        sprintf('All Bayesian correlation paths, page %d of %d',page,pages),inference,convergence_established,draw_note,false);
-end
-end
-
-function validate_plot_convergence(run_dir,summary,ids,counts,T,m,established)
-if ~isfield(summary,'convergence')
-    if established
-        error('DSC:ConvergenceMetadata','A converged plot requires a saved diagnostic report.');
-    end
-    return
-end
-report=summary.convergence;
-if ~isstruct(report)||~isscalar(report)||~isfield(report,'passed')|| ...
-        ~isequal(established,report.passed)
-    error('DSC:ConvergenceMetadata','The plot convergence flag disagrees with its diagnostic report.');
-end
-nr=m*(m-1)/2; expected=T*(m+nr);
-if established&&(~isfield(summary,'inference_mode')|| ...
-        ~ismember(summary.inference_mode,{'parameter_estimation','fixed_parameter_smoothing'}))
-    error('DSC:ConvergenceMetadata','A passing diagnostic report must identify its inference target.');
-end
-dsc_validate_convergence(report,ids,counts,expected);
-if established
-    path=fullfile(run_dir,'convergence','convergence_diagnostics.json');
-    if ~isfile(path)||~isequaln(report,jsondecode(fileread(path)))
-        error('DSC:ConvergenceMetadata','Passing run-summary diagnostics disagree with the saved diagnostic JSON.');
+    plot_page(figure_paths(1),dates,mean_path,lower,upper,pair_labels,ix, ...
+        sprintf('Pooled posterior mean correlation paths | Page %d of %d',page,pages), ...
+        inference,draw_note,page>1,[],[]);
+    if numel(chain_ids)>1
+        plot_page(figure_paths(2),dates,mean_path,lower,upper,pair_labels,ix, ...
+            sprintf('Convergence: mean correlation paths by chain | Page %d of %d',page,pages), ...
+            inference,draw_note,page>1,chain_means,chain_ids);
     end
 end
 end
 
-function [P,identity,iterations,draw_ids,dirs,ids,counts]=read_chain_draws(run_dir,summary)
+function [P,identity,iterations,draw_ids,dirs,ids,counts]=read_chain_draws(run_dir,summary,default_prefix)
 dirs={run_dir};
 if isfield(summary,'chain_dirs')
     dirs=summary.chain_dirs;
@@ -107,25 +109,60 @@ if ~iscell(dirs)||isempty(dirs)||~all(cellfun(@(x)ischar(x)&&isrow(x)&&~isempty(
     error('DSC:PathIdentity','The sampler summary must contain nonempty chain directory paths.');
 end
 dirs=dirs(:)'; canonical=cell(size(dirs));
+prefixes=repmat({default_prefix},size(dirs));
+if isfield(summary,'chain_file_prefixes')
+    prefixes=summary.chain_file_prefixes;
+    if isstring(prefixes), prefixes=cellstr(prefixes); end
+    if ~iscell(prefixes)||numel(prefixes)~=numel(dirs)
+        error('DSC:PathIdentity','A filename prefix is required for each original chain.');
+    end
+    prefixes=cellfun(@validate_file_prefix,prefixes(:)','UniformOutput',false);
+end
 for c=1:numel(dirs)
     file=java.io.File(dirs{c}); canonical{c}=char(file.getCanonicalPath());
 end
-if numel(unique(canonical))~=numel(dirs)
-    error('DSC:PathIdentity','Each posterior chain directory must be distinct.');
+keys=cellfun(@(p,f)[p filesep f],canonical,prefixes,'UniformOutput',false);
+if numel(unique(keys))~=numel(dirs)
+    error('DSC:PathIdentity','Each posterior chain directory and filename-prefix identity must be distinct.');
+end
+% Production summaries declare the retained counts. Allocate the pooled cube
+% once rather than copying its accumulated history for every loaded chunk.
+declared_counts=[]; declared_total=[];
+if isfield(summary,'saved_draws_per_chain')
+    declared_counts=summary.saved_draws_per_chain;
+    if ~isnumeric(declared_counts)||~isreal(declared_counts)|| ...
+            numel(declared_counts)~=numel(dirs)||any(~isfinite(declared_counts(:)))|| ...
+            any(declared_counts(:)<1)||any(declared_counts(:)~=floor(declared_counts(:)))
+        error('DSC:PathDraws','Invalid declared retained draw counts per chain.');
+    end
+    declared_counts=declared_counts(:)';
+    declared_total=sum(declared_counts);
+end
+if isfield(summary,'saved_draws')
+    value=summary.saved_draws;
+    if ~isnumeric(value)||~isreal(value)||~isscalar(value)||~isfinite(value)|| ...
+            value<1||value~=floor(value)||(~isempty(declared_total)&&value~=declared_total)
+        error('DSC:PathDraws','Invalid or inconsistent declared total retained draw count.');
+    end
+    declared_total=value;
 end
 P=[]; identity=[]; iterations=[]; draw_ids=[]; ids=nan(1,numel(dirs)); counts=zeros(1,numel(dirs));
+offset=0; chunk_values={}; chunk_iterations={}; chunk_ids={};
 for c=1:numel(dirs)
-    files=dir(fullfile(dirs{c},'posterior_chunk_*.mat'));
+    files=dir(fullfile(dirs{c},[prefixes{c} 'posterior_chunk_*.mat']));
     if isempty(files), error('DSC:NoChunks','No posterior chunks found in %s',dirs{c}); end
     numbers=zeros(1,numel(files));
     for n=1:numel(files)
-        token=regexp(files(n).name,'^posterior_chunk_(\d+)\.mat$','tokens','once');
+        token=regexp(files(n).name,['^' regexptranslate('escape',prefixes{c}) 'posterior_chunk_(\d+)\.mat$'],'tokens','once');
         if isempty(token), error('DSC:PathDraws','Invalid posterior chunk filename.'); end
         numbers(n)=str2double(token{1});
     end
     if numel(unique(numbers))~=numel(numbers), error('DSC:PathDraws','Duplicate chunk indices.'); end
     [~,order]=sort(numbers); files=files(order); last_iteration=0;
     for n=1:numel(files)
+        % A chunk also contains the full h paths and parameter draws. Release
+        % the previous struct before load materializes the next chunk.
+        clear loaded chunk values
         loaded=load(fullfile(dirs{c},files(n).name),'chunk');
         if ~isfield(loaded,'chunk'), error('DSC:PathIdentity','Missing posterior chunk.'); end
         chunk=loaded.chunk;
@@ -134,7 +171,8 @@ for c=1:numel(dirs)
             error('DSC:PathIdentity','A posterior chunk is missing required identity or draw fields.');
         end
         current=struct('dates',chunk.dates,'tickers',chunk.tickers, ...
-            'pair_i',chunk.pair_i,'pair_j',chunk.pair_j);
+            'pair_i',chunk.pair_i,'pair_j',chunk.pair_j,'compact', ...
+            isfield(chunk,'mu')||(isfield(chunk,'schema')&&strcmp(chunk.schema,'constant_mu_v1')));
         if isempty(identity), identity=current;
         elseif ~isequaln(identity,current)
             error('DSC:PathIdentity','Posterior chunks have different dates, series or pair order.');
@@ -162,30 +200,79 @@ for c=1:numel(dirs)
                 any(~isfinite(values(:)))||any(abs(values(:))>1)
             error('DSC:PathIdentity','Invalid dates, pairs or finite correlation draw dimensions.');
         end
-        P=cat(3,P,values); iterations=[iterations index]; %#ok<AGROW>
-        draw_ids=[draw_ids repmat(ids(c),1,draws)]; %#ok<AGROW>
+        next_offset=offset+draws;
+        if ~isempty(declared_total)
+            if next_offset>declared_total|| ...
+                    (~isempty(declared_counts)&&counts(c)+draws>declared_counts(c))
+                error('DSC:PathDraws','Loaded posterior draws exceed the declared retained count.');
+            end
+            if offset==0
+                P=zeros(T,nr,declared_total,'like',values);
+                iterations=zeros(1,declared_total,'like',index);
+                draw_ids=zeros(1,declared_total);
+            elseif ~strcmp(class(P),class(values))
+                % Determine MATLAB's concatenation class from empty arrays
+                % when reading historical mixed-class chunks.
+                prototype=cat(1,zeros(0,1,'like',P),zeros(0,1,'like',values));
+                if ~strcmp(class(P),class(prototype)), P=cast(P,'like',prototype); end
+            end
+            range=offset+1:next_offset;
+            if offset>0&&~strcmp(class(iterations),class(index))
+                prototype=cat(2,zeros(1,0,'like',iterations),zeros(1,0,'like',index));
+                if ~strcmp(class(iterations),class(prototype))
+                    iterations=cast(iterations,'like',prototype);
+                end
+            end
+            P(:,:,range)=values; iterations(range)=index; draw_ids(range)=ids(c);
+        else
+            % Historical direct-chunk calls may lack a count summary. Hold
+            % references and concatenate once after reading every chunk.
+            chunk_values{end+1}=values; %#ok<AGROW>
+            chunk_iterations{end+1}=index; %#ok<AGROW>
+            chunk_ids{end+1}=repmat(ids(c),1,draws); %#ok<AGROW>
+        end
+        offset=next_offset;
         counts(c)=counts(c)+draws; last_iteration=index(end);
     end
+    if ~isempty(declared_counts)&&counts(c)~=declared_counts(c)
+        error('DSC:PathDraws','Loaded posterior draws disagree with the declared chain count.');
+    end
+end
+clear loaded chunk values
+if isempty(declared_total)
+    P=cat(3,chunk_values{:}); iterations=[chunk_iterations{:}]; draw_ids=[chunk_ids{:}];
+elseif offset~=declared_total
+    error('DSC:PathDraws','Loaded posterior draws disagree with the declared total count.');
 end
 if numel(unique(ids))~=numel(ids)
     error('DSC:PathIdentity','Posterior directories must have distinct original chain IDs.');
 end
 end
 
-function path = plot_page(path,dates,median_path,lower,upper,pair_labels,indices,title_text,inference,convergence_established,draw_note,show_header)
+function plot_page(path,dates,mean_path,lower,upper,pair_labels,indices,title_text,inference,draw_note,append_page,chain_means,chain_ids)
 fig = figure('Visible','off','Color','w','Units','pixels','Position',[100 100 1200 1500]);
+cleanup=onCleanup(@()close(fig));
 layout = tiledlayout(numel(indices),1,'TileSpacing','compact','Padding','compact');
-if show_header && ~isempty(inference), layout.Padding='loose'; end
 x = datenum(dates);
 cmap = red_blue_map(257);
 colormap(fig,cmap);
+by_chain=~isempty(chain_ids);
+colors=lines(numel(chain_ids));
+if numel(chain_ids)>7, colors=turbo(numel(chain_ids)); end
 for pos = 1:numel(indices)
     k = indices(pos);
     ax = nexttile; hold(ax,'on');
-    draw_bars(ax,x,median_path(:,k));
-    fill(ax,[x; flipud(x)],[lower(:,k); flipud(upper(:,k))],[0.08 0.19 0.31], ...
-        'FaceAlpha',0.16,'EdgeColor','none');
-    plot(ax,x,median_path(:,k),'Color',[0.02 0.10 0.20],'LineWidth',1.1);
+    if by_chain
+        handles=gobjects(numel(chain_ids),1);
+        for c=1:numel(chain_ids)
+            handles(c)=plot(ax,x,chain_means(:,k,c),'Color',colors(c,:),'LineWidth',1.1);
+        end
+    else
+        draw_bars(ax,x,mean_path(:,k));
+        fill(ax,[x; flipud(x)],[lower(:,k); flipud(upper(:,k))],[0.08 0.19 0.31], ...
+            'FaceAlpha',0.16,'EdgeColor','none');
+        plot(ax,x,mean_path(:,k),'Color',[0.02 0.10 0.20],'LineWidth',1.1);
+    end
     yline(ax,0,'Color',[0.55 0.55 0.55],'LineWidth',0.5);
     if ~isempty(inference)
         cutoff=datenum(datetime(inference.parameter_estimation_end,'InputFormat','yyyy-MM-dd'));
@@ -200,64 +287,40 @@ for pos = 1:numel(indices)
     title(ax,char(pair_labels(k)),'Interpreter','none','FontWeight','normal');
     box(ax,'off'); grid(ax,'on');
 end
-cb = colorbar(ax);
-cb.Layout.Tile = 'east';
-cb.Label.String = 'Median correlation';
-cb.Ticks = -1:0.25:1;
-if show_header
-    if convergence_established, status='Convergence diagnostics passed';
-    else, status='Convergence not established'; end
-    if isempty(inference)
-        header={title_text,'Median and 68% pointwise band | Vertical colors show the median correlation value', ...
-            draw_note,status};
-    else
-        if strcmp(inference.inference_mode,'fixed_parameter_smoothing')
-            if isfield(inference,'parameter_smoothing')&&strcmp(inference.parameter_smoothing,'draws')
-                mode='Conditional smoothing with saved parameter draws | Bands include saved-parameter variation';
-            else
-                mode='Conditional on posterior-mean parameters | Bands exclude parameter uncertainty';
-            end
-        else
-            mode='Joint parameter and state draws | Bands include parameter uncertainty';
-        end
-        sample=sprintf('Parameters: %s to %s | Smoothing through %s', ...
-            inference.parameter_estimation_start,inference.parameter_estimation_end,inference.smoothing_end);
-        if isfield(inference,'calibration_weeks')
-            sample=sprintf('%s | First %d weeks excluded',sample,inference.calibration_weeks);
-        end
-        estimated=['Model estimated at ' inference.parameters_estimated_at ' (UTC)'];
-        if cutoff>x(1)&&cutoff<x(end), estimated=[estimated ' | Dashed line: estimation cutoff']; end
-        header={title_text,mode,sample,estimated, ...
-            'Median and 68% pointwise band | Figure 1 colors | Historical states may revise',draw_note,status};
-    end
-    title(layout,header,'FontWeight','bold','Interpreter','none','FontSize',11);
-end
-if isempty(inference)
-    exportgraphics(fig,path,'ContentType','vector');
+if by_chain
+    labels=compose('Chain %d',chain_ids);
+    lg=legend(ax,handles,labels,'Interpreter','none');
+    lg.Layout.Tile='east';
+    subtitle='Arithmetic mean across retained draws within each original chain';
 else
-    % Fixed paper margins keep long provenance headers and axis labels clear
-    % of the PDF edge; exportgraphics tightly crops figure text in R2024b.
-    set(fig,'PaperUnits','inches','PaperSize',[8.5 10.5], ...
-        'PaperPosition',[.35 .35 7.8 9.8],'PaperPositionMode','manual');
-    print(fig,path,'-dpdf','-painters');
+    cb = colorbar(ax);
+    cb.Layout.Tile = 'east';
+    cb.Label.String = 'Mean correlation';
+    cb.Ticks = -1:0.25:1;
+    subtitle='Posterior mean and 68% pointwise band (16th-84th percentiles)';
 end
-close(fig);
+title(layout,{title_text,subtitle,draw_note}, ...
+    'FontWeight','normal','Interpreter','none','FontSize',11);
+exportgraphics(fig,path,'ContentType','vector','Append',append_page);
 end
 
-function inference=read_inference(run_dir,dates,summary)
+function inference=read_inference(run_dir,dates,summary,prefix)
 inference=[];
-metadata_path=fullfile(run_dir,'inference_metadata.json');
-manifest_path=fullfile(run_dir,'run_manifest.json');
+metadata_path=fullfile(run_dir,[prefix 'inference_metadata.json']);
+manifest_path=fullfile(run_dir,[prefix 'run_manifest.json']);
 if isfile(manifest_path), manifest=jsondecode(fileread(manifest_path));
 else, manifest=struct(); end
 if ~isfile(metadata_path)
-    if (isfield(manifest,'inference')&&isstruct(manifest.inference))|| ...
-            (isfield(summary,'inference_mode')&&strcmp(summary.inference_mode,'fixed_parameter_smoothing'))
+    if isfield(manifest,'inference')
+        inference=manifest.inference;
+    elseif isfield(summary,'inference_mode')&&strcmp(summary.inference_mode,'fixed_parameter_smoothing')
         error('DSC:InferenceMetadata','Inference metadata is missing; cannot label conditional correlation paths.');
+    else
+        return
     end
-    return
+else
+    inference=jsondecode(fileread(metadata_path));
 end
-inference=jsondecode(fileread(metadata_path));
 required={'inference_mode','parameter_file','parameters_estimated_at','parameter_estimation_start', ...
     'parameter_estimation_end','parameter_estimation_draws','parameter_estimation_run', ...
     'smoothing_end','parameter_uncertainty_in_bands','parameter_smoothing'};
@@ -312,6 +375,21 @@ if isfield(inference,'calibration_weeks')
     if isnat(initial)||isnat(final)||start~=final+calweeks(1)||final~=initial+calweeks(n-1)
         error('DSC:InferenceMetadata','Calibration and model dates must be adjacent, non-overlapping weekly blocks.');
     end
+end
+end
+
+function tf=is_final_compact_output(summary)
+tf=isfield(summary,'final_output_schema')&& ...
+    ismember(summary.final_output_schema,{'compact_outputs_v1','joint_outputs_v1'});
+end
+
+function prefix=validate_file_prefix(prefix)
+if ~((ischar(prefix)&&(isrow(prefix)||isempty(prefix)))||(isstring(prefix)&&isscalar(prefix)))
+    error('DSC:PathIdentity','Filename prefixes must be scalar text.');
+end
+prefix=char(prefix);
+if ~isempty(prefix)&&isempty(regexp(prefix,'^[A-Za-z0-9_-]+$','once'))
+    error('DSC:PathIdentity','Filename prefixes may contain only letters, numbers, underscores and hyphens.');
 end
 end
 

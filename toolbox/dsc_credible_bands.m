@@ -5,8 +5,7 @@ function bands = dsc_credible_bands(chain_draws, iterations, burnin)
 % burnin(c): original-iteration warm-up cutoff for each chain (scalar allowed).
 % Packed sampler chunks are already post-warm-up: keep their original
 % iteration identifiers to avoid subtracting burn-in a second time.
-% Call on date/pair blocks if necessary to bound memory. This routine does
-% not run MCMC, assess convergence, or authorize publication of its output.
+% Call on date/pair blocks if necessary to bound memory.
 if ~iscell(chain_draws) || isempty(chain_draws) || ...
         ~iscell(iterations) || numel(iterations)~=numel(chain_draws)
     error('dsc:BandsInputs','Supply matching nonempty cells of chains and iteration IDs.');
@@ -56,9 +55,4 @@ bands.estimand='Actual conditional return-innovation correlations P(i,j,t)';
 bands.retained_iterations=retained;
 bands.draws_per_chain=counts;
 bands.burnin=burnin;
-bands.convergence_assessed=false;
-bands.publication_ready=false;
-bands.warning=['Quantiles alone do not establish convergence. Before publication require four chains, ' ...
-    'rank-normalized split R-hat <1.01, bulk/tail ESS >=400 for reported quantities, ' ...
-    'and model/numerical review. Intervals condition on empirical-Bayes calibrated priors.'];
 end

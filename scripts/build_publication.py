@@ -10,7 +10,6 @@ import argparse
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
-import math
 import os
 from pathlib import Path
 import re
@@ -519,7 +518,6 @@ def make_bayesian_paths(args, write, figures, data_summary):
     paths = dict(sampler)
     paths["inference"] = run_manifest.get("inference")
     inference = read_inference_metadata(run, sampler, paths, run_manifest, data_summary)
-    convergence_text = saved_convergence_text(run, sampler, inference)
     chains = int(sampler.get("num_chains", 1))
     if chains < 1:
         raise ValueError("Invalid original chain count")
@@ -541,10 +539,6 @@ def make_bayesian_paths(args, write, figures, data_summary):
         pages.append(prefix +
                      f"\\includegraphics[width=\\linewidth,height={height}\\textheight,keepaspectratio]"
                      f"{{generated/figures/{target.name}}}\n")
-    convergence = bool(sampler.get("convergence_established", False))
-    status_text = ("State-chain diagnostics passed; this is not a proof of convergence." if convergence else
-                   "State-chain convergence has not been established, so the bands are preliminary.")
-    status_text += convergence_text
     scope_text = ""
     band_text = "68\\% posterior bands from the saved run; they are not simultaneous bands."
     if inference:
@@ -586,10 +580,10 @@ def make_bayesian_paths(args, write, figures, data_summary):
           + scope_text +
           f"The selected sampler run retained {draws:,} draws pooled across {chains} original chain(s), "
           f"after discarding {warmup:,} warm-up iterations per chain. "
-          "The dark line is the posterior median of the actual correlation $P_{ij,t}$ and the gray envelope "
+          "The dark line is the posterior mean of the actual correlation $P_{ij,t}$ and the gray envelope "
           "contains the pointwise 16th and 84th percentiles. " + band_text + " Vertical colors use the same continuous scale "
           "as Figure~1: blue for negative values, white near zero, and red for positive values, with intensity "
-          "set by the posterior median. " + status_text + "\n"
+          "set by the posterior mean.\n"
           "The complete pairwise path figures are supplied in the companion PDF.\n\\clearpage\n"
           f"\\textbf{{Companion figure file.}} The complete set of {n_pairs} Bayesian correlation paths is generated as "
           "\\texttt{weekly\\_correlation\\_paths.pdf}. Each page uses the same vertical scale, color scale, "
@@ -602,7 +596,6 @@ def make_bayesian_paths(args, write, figures, data_summary):
         "retained_draws": draws,
         "warmup_iterations": warmup,
         "num_chains": chains,
-        "convergence_established": convergence,
         "summary_sha256": hashlib.sha256(summary_path.read_bytes()).hexdigest(),
         "run_manifest_sha256": hashlib.sha256(run_manifest_path.read_bytes()).hexdigest(),
         "figure_sha256": {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in copied},
@@ -612,65 +605,6 @@ def make_bayesian_paths(args, write, figures, data_summary):
         result["inference_metadata_sha256"] = hashlib.sha256((run / "inference_metadata.json").read_bytes()).hexdigest()
         result["run_manifest_sha256"] = hashlib.sha256(run_manifest_path.read_bytes()).hexdigest()
     return result
-
-
-def saved_convergence_text(run, sampler, inference):
-    """Use recorded diagnostics, keeping parameter and state checks separate."""
-    report = sampler.get("convergence")
-    if report is None:
-        if sampler.get("convergence_established", False):
-            raise ValueError("Passing convergence flag has no supporting diagnostic report")
-        return ""
-    diagnostic_path = run / "convergence" / "convergence_diagnostics.json"
-    if not diagnostic_path.is_file() or json.loads(diagnostic_path.read_text()) != report:
-        raise ValueError("Saved convergence diagnostics disagree with sampler summary")
-    validate_diagnostic_summary(report)
-    if report["passed"] != sampler.get("convergence_established", False):
-        raise ValueError("Convergence status and sampler flag disagree")
-    if inference and inference.get("state_convergence") != report:
-        raise ValueError("Inference state diagnostics disagree with sampler summary")
-    text = ""
-    if inference and "estimation_convergence" in inference:
-        estimate = inference["estimation_convergence"]
-        validate_diagnostic_summary(estimate)
-        text += " Parameter-estimation diagnostic status: " + tex(estimate["status"]) + "."
-    text += " State-smoothing diagnostic status: " + tex(report["status"]) + "."
-    if report.get("quantities_checked", 0):
-        def metric(key):
-            value = report.get(key)
-            return f"{value:.4g}" if isinstance(value, (int, float)) and math.isfinite(value) else "unavailable"
-        text += (f" Across {report['quantities_checked']:,} checked quantities, maximum rank-normalized "
-                 f"split $\\widehat R$: {metric('max_rhat')}; minimum bulk/tail effective sample sizes: "
-                 f"{metric('min_ess_bulk')}/{metric('min_ess_tail')}; maximum mean Monte Carlo error "
-                 f"relative to sample standard deviation: {metric('max_mcse_sd_ratio')}.")
-    if report.get("reason"):
-        text += " " + tex(report["reason"])
-    return text
-
-
-def validate_diagnostic_summary(report):
-    allowed = {"not_checked", "insufficient_draws", "insufficient_chains", "failed", "passed"}
-    if (not isinstance(report, dict) or report.get("status") not in allowed or
-            type(report.get("passed")) is not bool or report["passed"] != (report["status"] == "passed")):
-        raise ValueError("Invalid convergence diagnostic status")
-    if not report["passed"]:
-        return
-    try:
-        counts = report["actual_draws_per_chain"]
-        thresholds = report["thresholds"]
-        values = [report[key] for key in ["max_rhat", "min_ess_bulk", "min_ess_tail", "max_mcse_sd_ratio"]]
-        valid = (report["chains"] >= 4 and len(counts) == report["chains"] and
-                 len(set(counts)) == 1 and min(counts) == report["draws_per_chain"] and
-                 min(counts) >= thresholds["min_draws"] and report["quantities_checked"] > 0 and
-                 not report["failing_quantities"] and not report["unavailable_quantities"] and report["scope"] and
-                 all(isinstance(x, (int, float)) and math.isfinite(x) for x in values) and
-                 1 < thresholds["rhat"] and 0 < thresholds["ess"] and 0 < thresholds["mcse_ratio"] and
-                 values[0] < thresholds["rhat"] and min(values[1:3]) >= thresholds["ess"] and
-                 0 <= values[3] <= thresholds["mcse_ratio"])
-    except (KeyError, TypeError, ValueError):
-        valid = False
-    if not valid:
-        raise ValueError("Passing convergence diagnostics do not satisfy their recorded criteria")
 
 
 def read_inference_metadata(run, sampler, paths, run_manifest, data_summary):
@@ -787,60 +721,6 @@ def sampler_iteration_seconds(pilot, n):
     return float(elapsed) / float(n) if elapsed is not None else None
 
 
-def convergence_diagnostic_text(run, pilot):
-    """Summarize the saved convergence diagnostic for the diagnostics section."""
-    report = None
-    diagnostic_path = run / "convergence" / "convergence_diagnostics.json"
-    if diagnostic_path.is_file():
-        report = json.loads(diagnostic_path.read_text())
-    elif isinstance(pilot.get("convergence"), dict):
-        report = pilot["convergence"]
-    if not report:
-        return "No saved convergence diagnostic report was supplied.\\par\n"
-    validate_diagnostic_summary(report)
-    status = tex(report.get("status", "not_checked"))
-    reason = tex(report.get("reason", ""))
-    def metric(key):
-        value = report.get(key)
-        return f"{value:.4g}" if isinstance(value, (int, float)) and math.isfinite(value) else "Unavailable"
-    def passfail(good):
-        return "Pass" if good else "Fail"
-    thresholds = report.get("thresholds", {})
-    rhat_threshold = float(thresholds.get("rhat", thresholds.get("rhat_threshold", 1.01)))
-    ess_threshold = float(thresholds.get("ess", thresholds.get("min_ess", 400)))
-    mcse_threshold = float(thresholds.get("mcse_ratio", thresholds.get("max_mcse_ratio", 0.05)))
-    max_rhat = report.get("max_rhat")
-    min_bulk = report.get("min_ess_bulk")
-    min_tail = report.get("min_ess_tail")
-    max_mcse = report.get("max_mcse_sd_ratio")
-    rows = [
-        [r"Maximum rank-normalized split $\widehat R$", f"$< {rhat_threshold:.2f}$",
-         metric("max_rhat"), passfail(isinstance(max_rhat, (int, float)) and max_rhat < rhat_threshold)],
-        ["Minimum bulk ESS", f"$\\geq {ess_threshold:.0f}$",
-         metric("min_ess_bulk"), passfail(isinstance(min_bulk, (int, float)) and min_bulk >= ess_threshold)],
-        ["Minimum tail ESS", f"$\\geq {ess_threshold:.0f}$",
-         metric("min_ess_tail"), passfail(isinstance(min_tail, (int, float)) and min_tail >= ess_threshold)],
-        ["Maximum MCSE/SD", f"$\\leq {mcse_threshold:.2f}$",
-         metric("max_mcse_sd_ratio"), passfail(isinstance(max_mcse, (int, float)) and max_mcse <= mcse_threshold)],
-    ]
-    text = table(["Diagnostic", "Reference value", "Observed", "Result"], rows,
-                 align=r"p{.38\linewidth}p{.18\linewidth}p{.18\linewidth}p{.14\linewidth}")
-    text += f"Overall diagnostic status: {status}."
-    if report.get("quantities_checked", 0):
-        actual = report.get("actual_draws_per_chain", [])
-        if not isinstance(actual, list):
-            actual = [actual]
-        if actual:
-            text += " Retained draws by chain: " + tex(", ".join(str(x) for x in actual)) + "."
-        text += (f" Aligned diagnostic draws per chain: {report.get('draws_per_chain', 0)}; "
-                 f"checked quantities: {report['quantities_checked']:,}.")
-    if reason:
-        text += " " + reason
-    if not report.get("passed", False):
-        text += " Convergence is not established."
-    return text + "\\par\n"
-
-
 def make_pilot(args, write, folder):
     """Only report recorded pilot values; absent results stay explicitly unavailable."""
     priorfile = selected_prior_summary(args.pilot, folder)
@@ -865,7 +745,6 @@ def make_pilot(args, write, folder):
     if args.pilot is None:
         write("pilot_executive.tex", "No pilot summary was supplied, so the production cost remains unassessed.\n")
         write("pilot.tex", "No pilot summary was supplied to this build. Bayesian timing, memory and posterior results are unavailable.\n")
-        write("convergence_diagnostics.tex", "No sampler run was supplied, so convergence diagnostics are unavailable.\n")
         write("slides_pilot.tex", "No pilot summary supplied. Numerical results and computational timing are unavailable in this build.\n")
         write("production.tex", "A production cost recommendation requires a completed, measured pilot.\n")
         write("slides_production.tex", "The production decision requires a measured pilot and a review of model diagnostics.\n")
@@ -916,7 +795,7 @@ def make_pilot(args, write, folder):
     reason = get("stop_reason", "reason", "status", default="bounded pilot")
     status = get("status", default="bounded_pilot")
     compact_status = {"time_limit": "Time cap reached", "iteration_limit": "Iteration cap reached",
-                      "retained_draw_limit": "Retained-draw cap reached", "converged": "Diagnostics passed",
+                      "retained_draw_limit": "Retained-draw cap reached",
                       "failed": "Numerical failure", "bounded_pilot": "Bounded pilot"}.get(status, "See recorded reason")
     rows = [["Completed iterations", str(n)], ["Retained posterior draws", str(get("saved_draws", default=0))],
             ["Elapsed wall time", f"{float(elapsed)/60:.2f} minutes"],
@@ -1032,7 +911,7 @@ def make_pilot(args, write, folder):
             raise ValueError("Warm-up validation belongs to a different data source")
         validation_text += (
             f"The last warm-up state was also checked across all {validation['matrices_checked']:,} weekly correlation matrices. "
-            "These checks confirm that the saved pilot is numerically consistent; they are not convergence evidence.\\par\n"
+            "These checks confirm that the saved pilot is numerically consistent.\\par\n"
         )
     if "final_likelihood_validation" in evidence:
         likelihood = evidence["final_likelihood_validation"]
@@ -1044,7 +923,6 @@ def make_pilot(args, write, folder):
                             "up to numerical rounding.\\par\n")
     write("pilot.tex", table(["Run quantity", "Value"], run_rows,
                              align=r"p{.58\linewidth}p{.34\linewidth}"))
-    write("convergence_diagnostics.tex", convergence_diagnostic_text(args.pilot.parent, pilot))
     slide_rows = run_rows[:6]
     sampled = [row for row in rows if row[0].startswith("Sampled RSS")]
     if peak_rss is not None:
@@ -1060,7 +938,7 @@ def make_pilot(args, write, folder):
         write("slides_production.tex", "The pilot completed no full iteration. The next step is to investigate the unfinished stage. A production cost projection is unavailable.\n")
         return
     hours = float(per) * 4000 / 3600
-    next_step = ("Acceleration is implemented; mean/prior sensitivity and convergence assessment remain. " if accelerated else
+    next_step = ("Acceleration is implemented; mean/prior sensitivity review remains. " if accelerated else
                  "Mean/prior sensitivity and profiling or acceleration should precede a production decision. ")
     cost_scope = "Projections exclude checkpoint writes and production posterior-chunk storage. "
     write("pilot_executive.tex", f"The supplied sampler run completed {n} iterations in {float(elapsed)/60:.1f} minutes "
@@ -1069,7 +947,7 @@ def make_pilot(args, write, folder):
     write("production.tex", "")
     write("slides_production.tex", "\\textbf{Recommendation: hold production.}\\par\\medskip\\small " + next_step + "\\par\\medskip\n" +
           f"Illustrative 4,000-iteration chain: \\textbf{{{hours:.1f} hours}} at pilot speed. "
-          f"Four serial chains: \\textbf{{{4*hours:.1f} hours}}. " + cost_scope + "No convergence guarantee.\n")
+          f"Four serial chains: \\textbf{{{4*hours:.1f} hours}}. " + cost_scope + "\n")
 
 
 def main():

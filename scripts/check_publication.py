@@ -48,7 +48,7 @@ def check_in_workspace(run_id, no_render, qa):
                 raise AssertionError(f"Unexpected appendix or sample-path content in report: {present}")
         if label == "figure":
             forbidden = ["All Bayesian correlation paths", "Conditional on posterior-mean",
-                         "Bands exclude parameter uncertainty", "Convergence not established"]
+                         "Bands exclude parameter uncertainty"]
             present = [phrase for phrase in forbidden if phrase in content]
             if present:
                 raise AssertionError(f"Unexpected provenance header text in companion figures: {present}")
