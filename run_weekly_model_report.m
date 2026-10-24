@@ -112,5 +112,5 @@ result.publication_checked=false; result.run_prefix=cfg.file_prefix;
 result.model='joint_dsc_constant_mean'; result.mean_model='constant';
 result.delta_definition='delta is the log-volatility state h; sig2h is its random-walk innovation variance';
 result.gamma_definition='gamma is the matrix-log correlation state r; sig2r is its random-walk innovation variance';
-result=dsc_finalize_outputs(result,cfg,manifest);
+result=dsc_finalize_outputs(result,cfg,manifest,inference.smoothing_panel);
 end

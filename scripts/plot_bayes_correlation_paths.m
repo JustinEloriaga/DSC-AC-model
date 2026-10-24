@@ -97,6 +97,9 @@ for page = 1:pages
             inference,draw_note,page>1,chain_means,chain_ids);
     end
 end
+if numel(chain_ids)>1
+    dsc_plot_run_tables(figure_paths(2),run_dir,file_prefix);
+end
 end
 
 function [P,identity,iterations,draw_ids,dirs,ids,counts]=read_chain_draws(run_dir,summary,default_prefix)

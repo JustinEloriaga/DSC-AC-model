@@ -1,10 +1,14 @@
-function result=dsc_finalize_outputs(result,cfg,manifest)
+function result=dsc_finalize_outputs(result,cfg,manifest,model_panel)
 %DSC_FINALIZE_OUTPUTS Publish the run manifest, parameters, draws and path PDFs.
 root=canonical(cfg.output_root); prefix=char(cfg.file_prefix);
 assert(isfolder(root)&&~isempty(regexp(prefix,'^[A-Za-z0-9_-]+_$','once')), ...
     'dsc:FinalizeIdentity','An existing output directory and valid run prefix are required.');
 manifest_path=fullfile(root,[prefix 'run_manifest.json']);
 if nargin<3, manifest=jsondecode(fileread(manifest_path)); end
+if nargin>=4&&~isempty(model_panel)
+    validate_model_panel(model_panel,result);
+    manifest.return_ar1=dsc_return_ar1(model_panel);
+end
 parameter_path=fullfile(root,[prefix 'parameters.mat']);
 source_parameter_file=char(result.paths.parameters);
 has_own_bundle=isfile(source_parameter_file)&&owned(source_parameter_file,root,prefix);
@@ -50,7 +54,7 @@ else
     report.prior_posterior_summary=dsc_parameter_summary(draws,result.priors, ...
         result.tickers,result.pair_i,result.pair_j);
     report.parameter_summary_metadata=struct( ...
-        'posterior_source','Retained conditional-smoothing draws; variance parameters held fixed.', ...
+        'posterior_source','Retained conditional-smoothing draws; see inference.parameter_smoothing for variance inputs.', ...
         'posterior_std_convention','Sample standard deviation with n-1 denominator.');
 end
 report.manifest_file=manifest_path;
@@ -101,6 +105,21 @@ if create_pdf
     manifest.outputs.figures=cellstr(result.figure_paths);
     atomic_json(manifest_path,manifest,root,prefix);
 end
+end
+
+function validate_model_panel(panel,result)
+required={'dates','tickers','returns','observation_mask','pair_i','pair_j','source_hash'};
+assert(isstruct(panel)&&isscalar(panel)&&all(isfield(panel,required))&& ...
+    all(isfield(result,{'dates','tickers','T','m','pair_i','pair_j','priors'})), ...
+    'dsc:ReturnAR1Identity','The exact modeled panel and result identity are required for the return AR(1) appendix.');
+assert(isequal(panel.dates(:),result.dates(:))&& ...
+    isequal(string(panel.tickers(:)),string(result.tickers(:)))&& ...
+    isequal(size(panel.returns),[result.T result.m])&& ...
+    isequal(size(panel.observation_mask),size(panel.returns))&& ...
+    isequal(panel.pair_i(:),result.pair_i(:))&& ...
+    isequal(panel.pair_j(:),result.pair_j(:))&& ...
+    isfield(result.priors,'source_hash')&&isequal(panel.source_hash,result.priors.source_hash), ...
+    'dsc:ReturnAR1Identity','The return AR(1) appendix must use the exact model dates, series order, mask dimensions and source.');
 end
 
 function paths=validate_chunks(parameters,root,prefix)
