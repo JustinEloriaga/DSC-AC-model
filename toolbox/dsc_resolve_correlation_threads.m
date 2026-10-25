@@ -84,10 +84,12 @@ h=priors.mh0; r0=priors.mr0; variance=priors.sig2r_mean;
 if ~isnumeric(mu)||~isreal(mu)||numel(mu)~=m||any(~isfinite(mu(:)))|| ...
         ~isnumeric(h)||~isreal(h)||numel(h)~=m||any(~isfinite(h(:)))|| ...
         ~isnumeric(r0)||~isreal(r0)||numel(r0)~=q||any(~isfinite(r0(:)))|| ...
-        ~isnumeric(variance)||~isreal(variance)||~isscalar(variance)|| ...
-        ~isfinite(variance)||variance<=0
+        ~isnumeric(variance)||~isreal(variance)||~isvector(variance)|| ...
+        ~any(numel(variance)==[1 q])||any(~isfinite(variance(:)))||any(variance(:)<=0)
     info.reason='Optional prior context is invalid.'; return
 end
+variance=double(variance(:)');
+if isscalar(variance), variance=repmat(variance,1,q); end
 if T<32
     selected=1; info.status='small_panel'; info.selected=1; info.candidates=1;
     info.calibration_dates=T;
@@ -109,11 +111,11 @@ t=(1:count)'; u=t/max(1,count); sd=sqrt(double(variance));
 r=repmat(double(r0(:)'),count,1);
 for j=1:q
     phase=j*sqrt(2);
-    r(:,j)=r(:,j)+sd*sqrt(count)*(.6*sin(2*pi*u+phase)+ ...
+    r(:,j)=r(:,j)+sd(j)*sqrt(count)*(.6*sin(2*pi*u+phase)+ ...
         .3*sin(11*pi*u+phase)+.1*sin(47*pi*u+phase))+ ...
-        .5*sd*sin(t*(sqrt(5)+j/7)+phase);
+        .5*sd(j)*sin(t*(sqrt(5)+j/7)+phase);
 end
-proposal=r; proposal(:,1)=proposal(:,1)+.1*sd*sin(t/11);
+proposal=r; proposal(:,1)=proposal(:,1)+.1*sd(1)*sin(t/11);
 candidates=unique([1 2.^(1:floor(log2(budget))) budget]);
 cold=zeros(3,numel(candidates)); warm=cold;
 try

@@ -10,7 +10,6 @@ if ~isfield(cfg,'estimation_end_date'), cfg.estimation_end_date=''; end
 if ~isfield(cfg,'parameter_dir')||strlength(string(cfg.parameter_dir))==0
     cfg.parameter_dir=cfg.output_root;
 end
-if ~isfield(cfg,'parameter_file'), cfg.parameter_file=''; end
 if ~isfield(cfg,'parameter_smoothing')||strlength(string(cfg.parameter_smoothing))==0
     cfg.parameter_smoothing='mean';
 end
@@ -25,9 +24,6 @@ if cfg.estimate_parameters
         error('dsc:InferenceConfig','prior_weeks must be a positive integer.');
     end
     excluded=cfg.prior_weeks;
-    if strlength(string(cfg.parameter_file))>0
-        error('dsc:InferenceConfig','parameter_file applies only when estimate_parameters=false.');
-    end
     last=numel(panel.dates);
     if strlength(string(cfg.estimation_end_date))>0
         cutoff=datetime(cfg.estimation_end_date,'InputFormat','yyyy-MM-dd');
@@ -54,7 +50,7 @@ else
     if strlength(string(cfg.estimation_end_date))>0
         error('dsc:InferenceConfig','The saved model determines the estimation cutoff; leave estimation_end_date empty when loading.');
     end
-    parameters=dsc_load_parameters(cfg.parameter_dir,panel,cfg.parameter_file);
+    parameters=dsc_load_parameters(cfg.parameter_dir,panel);
     excluded=parameters.calibration_weeks;
     priors=parameters.priors;
     % The loader has verified the exact training prefix. Preserve its source

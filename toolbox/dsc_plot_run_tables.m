@@ -44,8 +44,8 @@ required={'Parameter','Series','PriorDistribution','PriorMean','PriorStd','Poste
 if ~istable(summary)||~all(ismember(required,summary.Properties.VariableNames))||isempty(summary)
     error('DSC:ParameterTable','The saved parameter comparison must be a nonempty table with prior/posterior moments.');
 end
-section.headers={'Parameter','Series or pair','Prior','Prior mean','Prior SD','Post. mean','Post. SD'};
-section.widths=[.09 .31 .12 .12 .12 .12 .12];
+section.headers={'Param.','Series or pair','Prior','Prior mean','Prior SD','Post. mean','Post. SD'};
+section.widths=[.075 .225 .10 .11 .11 .19 .19];
 section.numeric_columns=4:7;
 section.rows=cell(height(summary),numel(required));
 for r=1:height(summary)
@@ -59,7 +59,15 @@ for r=1:height(summary)
         if ~isnumeric(values)||~isreal(values)||size(values,2)~=1
             error('DSC:ParameterTable','Each prior/posterior moment must be a real numeric column.');
         end
-        section.rows{r,c}=number_text(values(r),false);
+        if c>=6
+            prior_values=summary.(required{c-2});
+            if ~isnumeric(prior_values)||~isreal(prior_values)||size(prior_values,2)~=1
+                error('DSC:ParameterTable','Each prior moment must be a real numeric column.');
+            end
+            section.rows{r,c}=relative_posterior_text(values(r),prior_values(r));
+        else
+            section.rows{r,c}=number_text(values(r),false);
+        end
     end
 end
 section.note={ ...
@@ -111,6 +119,7 @@ if conditional&&isfield(manifest,'inference')&&isstruct(manifest.inference)&& ..
     end
 end
 section.note=[section.note { ...
+    'Parentheses: % change = 100*(posterior/prior - 1); N/A when undefined.', ...
     'Prior moments are analytic under empirical-Bayes priors calibrated from the data.', ...
     'mu: constant return mean; sig2h: log-variance-state innovation variance.', ...
     'sig2r: matrix-log correlation-coordinate innovation variance.'}];
@@ -128,64 +137,41 @@ end
 end
 
 function section=read_ar_section(manifest)
-section=empty_section('Return AR(1) regression');
+section=empty_section('Return AR(1): initial prior calibration');
 if ~isfield(manifest,'return_ar1')||~isstruct(manifest.return_ar1)|| ...
         ~isscalar(manifest.return_ar1)||~isfield(manifest.return_ar1,'rows')|| ...
         isempty(manifest.return_ar1.rows)
-    section.note={'The return AR(1) regression is unavailable in this saved run.'};
+    section.note={'The initial prior-calibration return AR(1) regression is unavailable in this saved run.'};
     return
 end
 report=manifest.return_ar1; rows=report.rows;
-required={'ticker','n_observations','intercept','rho','standard_error','statistic','p_value','status','reason'};
+required={'ticker','p_value'};
 if ~isstruct(rows)||~all(isfield(rows,required))
     error('DSC:ReturnAR1Table','The saved return AR(1) rows are incomplete.');
 end
-section.headers={'Series','N','Intercept a','rho','HAC SE(rho)','z statistic','p-value'};
-section.widths=[.28 .07 .13 .13 .14 .13 .12];
-section.numeric_columns=2:7;
+section.headers={'Series','p-value'};
+section.widths=[.7 .3];
+section.numeric_columns=2;
 section.rows=cell(numel(rows),numel(section.headers));
-unavailable={};
 for r=1:numel(rows)
     section.rows{r,1}=char(erase(string(rows(r).ticker)," Index"));
-    n=rows(r).n_observations;
-    if ~isnumeric(n)||~isscalar(n)||~isfinite(n)||n<0||n~=floor(n)
-        error('DSC:ReturnAR1Table','AR(1) observation counts must be nonnegative integers.');
-    end
-    section.rows{r,2}=sprintf('%d',n);
-    available=strcmp(rows(r).status,'available');
-    if ~available&&~strcmp(rows(r).status,'unavailable')
-        error('DSC:ReturnAR1Table','Unknown saved AR(1) row status.');
-    end
-    fields={'intercept','rho','standard_error','statistic','p_value'};
-    for c=1:numel(fields)
-        value=rows(r).(fields{c});
-        if available&&(~isnumeric(value)||~isreal(value)||~isscalar(value)||~isfinite(value)|| ...
-                (strcmp(fields{c},'p_value')&&(value<0||value>1)))
-            error('DSC:ReturnAR1Table','Available AR(1) estimates must be finite, with p-values in [0,1].');
-        end
-        if available, section.rows{r,c+2}=number_text(value,strcmp(fields{c},'p_value'));
-        else, section.rows{r,c+2}='--'; end
-    end
-    if ~available
-        reason=char(string(rows(r).reason));
-        if isempty(reason), reason='regression unavailable'; end
-        unavailable{end+1}=[section.rows{r,1} ': ' reason]; %#ok<AGROW>
+    value=rows(r).p_value;
+    if isempty(value)||(isnumeric(value)&&isscalar(value)&&isnan(value))
+        section.rows{r,2}='--';
+    elseif ~isnumeric(value)||~isreal(value)||~isscalar(value)||~isfinite(value)||value<0||value>1
+        error('DSC:ReturnAR1Table','AR(1) p-values must be finite scalars in [0,1] or unavailable.');
+    else
+        section.rows{r,2}=number_text(value,true);
     end
 end
 if isfield(report,'sample_start')&&isfield(report,'sample_end')
-    section.title=sprintf('Return AR(1) regression | %s to %s',report.sample_start,report.sample_end);
-end
-lag=8;
-if isfield(report,'hac_lag'), lag=report.hac_lag; end
-if ~isnumeric(lag)||~isscalar(lag)||~isfinite(lag)||lag<0||lag~=floor(lag)
-    error('DSC:ReturnAR1Table','The saved HAC lag must be a nonnegative integer.');
+    section.title=sprintf('Return AR(1): initial prior calibration | %s to %s',report.sample_start,report.sample_end);
 end
 section.note={ ...
     'x_t = a + rho*x_(t-1) + e_t; H0: rho = 0, two-sided standard-normal p-values.', ...
-    sprintf('Weekly percent log returns; OLS with Newey-West HAC (Bartlett, lag %d), N/(N-2) adjustment.',lag), ...
-    'a is the regression intercept, distinct from model mu and the unconditional return mean.', ...
+    'Weekly percent log returns; OLS with Newey-West HAC (Bartlett), N/(N-2) adjustment.', ...
+    'Initial prior-calibration sample; 103 consecutive-week pairs with 104 complete returns.', ...
     'Failure to reject rho = 0 does not establish i.i.d. returns.'};
-if ~isempty(unavailable), section.note=[section.note unavailable]; end
 end
 
 function section=empty_section(title_text)
@@ -244,6 +230,21 @@ elseif abs(value)<1e-3||abs(value)>=1e4
     text_value=sprintf('%.3e',value);
 else
     text_value=sprintf('%.4g',value);
+end
+end
+
+function text_value=relative_posterior_text(posterior,prior)
+base=number_text(posterior,false);
+if ~isnumeric(posterior)||~isreal(posterior)||~isscalar(posterior)||~isfinite(posterior)|| ...
+        ~isnumeric(prior)||~isreal(prior)||~isscalar(prior)||~isfinite(prior)||prior==0
+    text_value=[base ' (N/A)'];
+    return
+end
+change=100*(posterior/prior-1);
+if ~isfinite(change)
+    text_value=[base ' (N/A)'];
+else
+    text_value=sprintf('%s (%+.1f%%)',base,change);
 end
 end
 

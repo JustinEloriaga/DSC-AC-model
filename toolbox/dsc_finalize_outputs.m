@@ -1,13 +1,13 @@
-function result=dsc_finalize_outputs(result,cfg,manifest,model_panel)
+function result=dsc_finalize_outputs(result,cfg,manifest,calibration_panel)
 %DSC_FINALIZE_OUTPUTS Publish the run manifest, parameters, draws and path PDFs.
 root=canonical(cfg.output_root); prefix=char(cfg.file_prefix);
 assert(isfolder(root)&&~isempty(regexp(prefix,'^[A-Za-z0-9_-]+_$','once')), ...
     'dsc:FinalizeIdentity','An existing output directory and valid run prefix are required.');
 manifest_path=fullfile(root,[prefix 'run_manifest.json']);
 if nargin<3, manifest=jsondecode(fileread(manifest_path)); end
-if nargin>=4&&~isempty(model_panel)
-    validate_model_panel(model_panel,result);
-    manifest.return_ar1=dsc_return_ar1(model_panel);
+if nargin>=4&&~isempty(calibration_panel)
+    validate_calibration_panel(calibration_panel,result,cfg);
+    manifest.return_ar1=dsc_return_ar1(calibration_panel);
 end
 parameter_path=fullfile(root,[prefix 'parameters.mat']);
 source_parameter_file=char(result.paths.parameters);
@@ -54,28 +54,19 @@ else
     report.prior_posterior_summary=dsc_parameter_summary(draws,result.priors, ...
         result.tickers,result.pair_i,result.pair_j);
     report.parameter_summary_metadata=struct( ...
-        'posterior_source','Retained conditional-smoothing draws; see inference.parameter_smoothing for variance inputs.', ...
+        'posterior_source','Retained conditional-smoothing draws.', ...
         'posterior_std_convention','Sample standard deviation with n-1 denominator.');
 end
 report.manifest_file=manifest_path;
-manifest.final_output_schema='joint_outputs_v1';
-manifest.priors=json_dates(result.priors);
 manifest.run_summary=run_summary(result);
 if isfield(result,'inference')
-    manifest.inference=remove_fields(result.inference,{'estimation_convergence','state_convergence'});
+    manifest.inference=remove_fields(result.inference,{'estimation_convergence','state_convergence','parameter_smoothing'});
     if has_own_bundle, manifest.inference.parameter_file=parameter_path; end
 end
-manifest.outputs=struct('parameters',parameter_path,'joint_draw_chunks', ...
-    {owned_files(root,[prefix '*posterior_chunk_*.mat'],prefix)});
-create_pdf=true;
-if isfield(cfg,'create_pdf'), create_pdf=cfg.create_pdf; end
-manifest.pdf=struct('enabled',logical(create_pdf),'center','pooled posterior mean', ...
-    'pointwise_credible_mass',.68,'quantile_probabilities',[.16 .84], ...
-    'convergence_enabled',logical(create_pdf)&&result.num_chains>1, ...
-    'convergence_center','separate posterior mean for each original chain');
+draw_chunks=owned_files(root,[prefix '*posterior_chunk_*.mat'],prefix);
 % Complete all publications before deleting staging files. Each replacement
 % is atomic; failure leaves the original joint chunks and remaining sidecars.
-atomic_json(manifest_path,manifest,root,prefix);
+manifest=dsc_run_lifecycle('publishing',root,prefix,manifest);
 atomic_mat(parameter_path,'parameters',report,root,prefix);
 
 patterns={'*checkpoint.mat','*pilot_summary.json','*prior_summary.json', ...
@@ -92,34 +83,67 @@ end
 if has_own_bundle&&~strcmp(canonical(source_parameter_file),canonical(parameter_path))
     delete(source_parameter_file);
 end
-result.final_output_schema='joint_outputs_v1';
 result.paths=struct('manifest',manifest_path,'parameters',parameter_path, ...
-    'draw_chunks',{manifest.outputs.joint_draw_chunks});
+    'draw_chunks',{draw_chunks});
 result.figure_paths=strings(0,1); result.figure_pdf=''; result.report_pdf='';
+create_pdf=true;
+if isfield(cfg,'create_pdf'), create_pdf=cfg.create_pdf; end
 % Plot from the published joint chunks and manifest, without retaining a
 % duplicate bands MAT file. Cleanup has finished, so these PDFs are retained.
 if create_pdf
     result.figure_paths=plot_bayes_correlation_paths(root,prefix);
     result.figure_pdf=char(result.figure_paths(1));
     result.paths.figures=result.figure_paths;
-    manifest.outputs.figures=cellstr(result.figure_paths);
-    atomic_json(manifest_path,manifest,root,prefix);
+end
+dsc_run_lifecycle('finish',root,prefix,manifest);
+% Only fully published invocations can trigger retention. Failed estimation
+% and publication leave evidence for the next successful run to classify.
+try
+    dsc_prune_outputs(root);
+catch problem
+    warning('dsc:OutputRetention','Run saved, but output retention failed: %s',problem.message);
 end
 end
 
-function validate_model_panel(panel,result)
+function validate_calibration_panel(panel,result,cfg)
 required={'dates','tickers','returns','observation_mask','pair_i','pair_j','source_hash'};
 assert(isstruct(panel)&&isscalar(panel)&&all(isfield(panel,required))&& ...
-    all(isfield(result,{'dates','tickers','T','m','pair_i','pair_j','priors'})), ...
-    'dsc:ReturnAR1Identity','The exact modeled panel and result identity are required for the return AR(1) appendix.');
-assert(isequal(panel.dates(:),result.dates(:))&& ...
+    all(isfield(result,{'dates','tickers','m','pair_i','pair_j','priors','inference'}))&& ...
+    isstruct(result.inference)&&isscalar(result.inference)&& ...
+    all(isfield(result.inference,{'calibration_weeks','calibration_start','calibration_end'}))&& ...
+    isfield(cfg,'prior_weeks'), ...
+    'dsc:ReturnAR1Identity','The initial prior-calibration panel and its run identity are required for the return AR(1) appendix.');
+weeks=cfg.prior_weeks; dates=panel.dates(:);
+assert(isnumeric(weeks)&&isreal(weeks)&&isscalar(weeks)&&isfinite(weeks)&& ...
+    weeks>=1&&weeks==floor(weeks)&&isequal(result.inference.calibration_weeks,weeks)&& ...
+    isdatetime(dates)&&numel(dates)==weeks&&~any(isnat(dates))&& ...
+    all(dates(2:end)==dates(1:end-1)+calweeks(1))&& ...
+    isdatetime(result.dates)&&~isempty(result.dates)&& ...
+    dates(end)+calweeks(1)==result.dates(1)&& ...
     isequal(string(panel.tickers(:)),string(result.tickers(:)))&& ...
-    isequal(size(panel.returns),[result.T result.m])&& ...
+    isequal(size(panel.returns),[weeks result.m])&& ...
     isequal(size(panel.observation_mask),size(panel.returns))&& ...
     isequal(panel.pair_i(:),result.pair_i(:))&& ...
     isequal(panel.pair_j(:),result.pair_j(:))&& ...
     isfield(result.priors,'source_hash')&&isequal(panel.source_hash,result.priors.source_hash), ...
-    'dsc:ReturnAR1Identity','The return AR(1) appendix must use the exact model dates, series order, mask dimensions and source.');
+    'dsc:ReturnAR1Identity','The return AR(1) appendix must use exactly the initial prior-calibration weeks preceding the model, with matching series, pair order, mask dimensions and source.');
+expected_dates=string(dates([1 end]),'yyyy-MM-dd');
+assert(isequal(expected_dates,[string(result.inference.calibration_start);string(result.inference.calibration_end)]), ...
+    'dsc:ReturnAR1Identity','The return AR(1) dates differ from the run''s initial prior-calibration dates.');
+for field={'calibration_dates','initial_dates'}
+    name=field{1};
+    if isfield(result.priors,name)
+        value=result.priors.(name);
+        if isdatetime(value), value=string(value(:),'yyyy-MM-dd');
+        else, value=string(value(:)); end
+        assert(isequal(value,expected_dates),'dsc:ReturnAR1Identity', ...
+            'The return AR(1) dates differ from the saved %s.',name);
+    end
+end
+if isfield(result.priors,'initial_weeks')
+    assert(isequal(result.priors.initial_weeks,weeks),'dsc:ReturnAR1Identity', ...
+        'The return AR(1) week count differs from the initial prior-calibration window.');
+end
 end
 
 function paths=validate_chunks(parameters,root,prefix)
@@ -205,20 +229,9 @@ end
 
 function summary=run_summary(result)
 summary=struct();
-names={'status','reason','failure_identifier', ...
-    'inference_mode','mean_model','schema','file_prefix','chain_id','seed', ...
-    'chain_ids','chain_file_prefixes','chain_dirs','seeds','num_chains','parallel_chains', ...
-    'completed_iterations','completed_iterations_per_chain','saved_draws','saved_draws_per_chain','burnin', ...
-    'requested_retained_draws_per_chain','T','m','pairs', ...
-    'first_date','last_date','excluded_initial_weeks', ...
-    'total_seconds','session_seconds','stage_seconds','stage_elapsed_seconds', ...
-    'implementation','correlation_threads', ...
-    'r_proposals','h_proposals','r_invalid_proposals','h_invalid_proposals'};
+names={'total_seconds','session_seconds','stage_seconds','stage_elapsed_seconds'};
 for k=1:numel(names)
     key=names{k}; if isfield(result,key), summary.(key)=result.(key); end
-end
-if isfield(result,'chain_results')
-    summary.chains=cellfun(@run_summary,result.chain_results,'UniformOutput',false);
 end
 end
 
@@ -266,15 +279,6 @@ temporary=temporary_path(root,prefix,'.mat');
 guard=onCleanup(@()remove_temporary(temporary));
 data=struct(); data.(name)=value;
 save(temporary,'-struct','data','-v7.3');
-publish(temporary,path); clear guard
-end
-
-function atomic_json(path,value,root,prefix)
-temporary=temporary_path(root,prefix,'.json');
-guard=onCleanup(@()remove_temporary(temporary));
-fid=fopen(temporary,'w'); assert(fid>=0,'dsc:FinalizeWrite','Cannot open temporary output.');
-file_guard=onCleanup(@()fclose(fid));
-fprintf(fid,'%s\n',jsonencode(value,PrettyPrint=true)); clear file_guard
 publish(temporary,path); clear guard
 end
 

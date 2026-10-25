@@ -83,18 +83,24 @@ if numel(chain_ids)>1
 end
 plot_summary=struct('pooled_mean',mean_path,'lower',lower,'upper',upper, ...
     'chain_means',chain_means,'chain_ids',chain_ids, ...
-    'retained_draws_per_chain',retained_draws_per_chain);
+    'retained_draws_per_chain',retained_draws_per_chain, ...
+    'pooled_y_limits',nan(numel(pair_labels),2));
+if numel(chain_ids)>1
+    plot_summary.chain_y_limits=nan(numel(pair_labels),2);
+end
 
 for page = 1:pages
     ix = (page-1)*9 + (1:9);
     ix = ix(ix<=numel(pair_labels));
-    plot_page(figure_paths(1),dates,mean_path,lower,upper,pair_labels,ix, ...
+    pooled_y_limits=plot_page(figure_paths(1),dates,mean_path,lower,upper,pair_labels,ix, ...
         sprintf('Pooled posterior mean correlation paths | Page %d of %d',page,pages), ...
         inference,draw_note,page>1,[],[]);
+    plot_summary.pooled_y_limits(ix,:)=pooled_y_limits;
     if numel(chain_ids)>1
-        plot_page(figure_paths(2),dates,mean_path,lower,upper,pair_labels,ix, ...
+        chain_y_limits=plot_page(figure_paths(2),dates,mean_path,lower,upper,pair_labels,ix, ...
             sprintf('Convergence: mean correlation paths by chain | Page %d of %d',page,pages), ...
             inference,draw_note,page>1,chain_means,chain_ids);
+        plot_summary.chain_y_limits(ix,:)=chain_y_limits;
     end
 end
 if numel(chain_ids)>1
@@ -252,7 +258,7 @@ if numel(unique(ids))~=numel(ids)
 end
 end
 
-function plot_page(path,dates,mean_path,lower,upper,pair_labels,indices,title_text,inference,draw_note,append_page,chain_means,chain_ids)
+function y_limits=plot_page(path,dates,mean_path,lower,upper,pair_labels,indices,title_text,inference,draw_note,append_page,chain_means,chain_ids)
 fig = figure('Visible','off','Color','w','Units','pixels','Position',[100 100 1200 1500]);
 cleanup=onCleanup(@()close(fig));
 layout = tiledlayout(numel(indices),1,'TileSpacing','compact','Padding','compact');
@@ -262,16 +268,26 @@ colormap(fig,cmap);
 by_chain=~isempty(chain_ids);
 colors=lines(numel(chain_ids));
 if numel(chain_ids)>7, colors=turbo(numel(chain_ids)); end
+y_limits=zeros(numel(indices),2);
 for pos = 1:numel(indices)
     k = indices(pos);
     ax = nexttile; hold(ax,'on');
     if by_chain
+        displayed=chain_means(:,k,:);
         handles=gobjects(numel(chain_ids),1);
         for c=1:numel(chain_ids)
             handles(c)=plot(ax,x,chain_means(:,k,c),'Color',colors(c,:),'LineWidth',1.1);
         end
     else
-        draw_bars(ax,x,mean_path(:,k));
+        displayed=[mean_path(:,k);lower(:,k);upper(:,k)];
+    end
+    extent=[min(displayed(:))-.1 max(displayed(:))+.1];
+    if ~all(isfinite(extent))||extent(1)>=extent(2)
+        error('DSC:PathLimits','Displayed correlation paths must have finite, nonempty ranges.');
+    end
+    y_limits(pos,:)=extent;
+    if ~by_chain
+        draw_bars(ax,x,mean_path(:,k),extent);
         fill(ax,[x; flipud(x)],[lower(:,k); flipud(upper(:,k))],[0.08 0.19 0.31], ...
             'FaceAlpha',0.16,'EdgeColor','none');
         plot(ax,x,mean_path(:,k),'Color',[0.02 0.10 0.20],'LineWidth',1.1);
@@ -283,7 +299,7 @@ for pos = 1:numel(indices)
             xline(ax,cutoff,'--','Color',[.25 .25 .25],'LineWidth',.9,'HandleVisibility','off');
         end
     end
-    ylim(ax,[-1 1]); xlim(ax,[x(1) x(end)]);
+    ylim(ax,extent); xlim(ax,[x(1) x(end)]);
     clim(ax,[-1 1]);
     datetick(ax,'x','yyyy','keeplimits');
     ylabel(ax,'P_{ij,t}');
@@ -326,7 +342,7 @@ else
 end
 required={'inference_mode','parameter_file','parameters_estimated_at','parameter_estimation_start', ...
     'parameter_estimation_end','parameter_estimation_draws','parameter_estimation_run', ...
-    'smoothing_end','parameter_uncertainty_in_bands','parameter_smoothing'};
+    'smoothing_end','parameter_smoothing'};
 if ~isstruct(inference)||~isscalar(inference)||~all(isfield(inference,required))|| ...
         ~isfield(manifest,'inference')||~isequaln(inference,manifest.inference)
     error('DSC:InferenceMetadata','Inference metadata and run manifest are missing fields or disagree.');
@@ -339,10 +355,10 @@ for k=[1 2 3 4 5 7 8]
 end
 mode=inference.inference_mode;
 parameter_smoothing=inference.parameter_smoothing;
+inference.parameter_uncertainty_in_bands= ...
+    strcmp(mode,'parameter_estimation')||strcmp(parameter_smoothing,'draws');
 if ~ismember(mode,{'parameter_estimation','fixed_parameter_smoothing'})|| ...
         ~ismember(parameter_smoothing,{'draws','mean'})|| ...
-        ~islogical(inference.parameter_uncertainty_in_bands)||~isscalar(inference.parameter_uncertainty_in_bands)|| ...
-        inference.parameter_uncertainty_in_bands~=(strcmp(mode,'parameter_estimation')||strcmp(parameter_smoothing,'draws'))|| ...
         ~isscalar(inference.parameter_estimation_draws)||inference.parameter_estimation_draws<2|| ...
         ~isfinite(inference.parameter_estimation_draws)|| ...
         inference.parameter_estimation_draws~=floor(inference.parameter_estimation_draws)
@@ -396,9 +412,9 @@ if ~isempty(prefix)&&isempty(regexp(prefix,'^[A-Za-z0-9_-]+$','once'))
 end
 end
 
-function draw_bars(ax,x,y)
+function draw_bars(ax,x,y,y_limits)
 edges = [x(1); (x(1:end-1)+x(2:end))/2; x(end)];
-image(ax,'XData',[edges(1) edges(end)],'YData',[-1 1], ...
+image(ax,'XData',[edges(1) edges(end)],'YData',y_limits, ...
     'CData',reshape(y,1,[]),'CDataMapping','scaled','AlphaData',0.22);
 set(ax,'YDir','normal');
 end

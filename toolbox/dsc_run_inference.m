@@ -50,7 +50,6 @@ if needs_conditional_smoothing
     else
         smoothing_cfg.fixed_parameters=parameters.parameter_estimate;
     end
-    smoothing_cfg.parameter_file=parameters.path;
     smoothing_priors=parameters.priors;
     smoothing_priors.estimation_source_hash=parameters.source_hash;
     smoothing_priors.source_hash=panel.source_hash;
@@ -72,28 +71,13 @@ metadata=struct('estimate_parameters_requested',inference.estimate_parameters, .
     'full_data_start',char(string(panel.dates(1),'yyyy-MM-dd')), ...
     'smoothing_start',char(string(modeled.dates(1),'yyyy-MM-dd')), ...
     'smoothing_end',char(string(panel.dates(end),'yyyy-MM-dd')), ...
-    'parameter_smoothing',parameter_smoothing, ...
-    'fixed_parameter_summary',parameter_summary_text(parameter_smoothing,result.inference_mode), ...
-    'state_scope','Static mu and stochastic h/r jointly inferred; calibration weeks excluded; historical smoothing may revise.', ...
-    'parameter_uncertainty_in_bands',strcmp(result.inference_mode,'parameter_estimation')||strcmp(parameter_smoothing,'draws'));
-if strcmp(result.inference_mode,'parameter_estimation')
-    metadata.parameter_uncertainty_method='joint_posterior';
-elseif strcmp(parameter_smoothing,'draws')
-    metadata.parameter_uncertainty_method='single_sweep_cycling_approximation';
-    metadata.parameter_uncertainty_limitation='One conditional sweep per saved variance draw does not generally sample the exact posterior mixture.';
-else
-    metadata.parameter_uncertainty_method='fixed_variance_conditional';
-    metadata.parameter_uncertainty_limitation='Bands condition on posterior-mean delta/gamma; mu is resampled.';
-end
-metadata.num_chains=numel(result.chain_dirs);
-metadata.retained_draws_per_chain=result.saved_draws_per_chain;
-if ~isempty(estimation_result)
-    metadata.parameter_estimation_status=estimation_result.status;
-elseif isfield(parameters,'estimation_status')
-    metadata.parameter_estimation_status=parameters.estimation_status;
-end
-if isfield(parameters,'requested_retained_draws')
-    metadata.parameter_estimation_requested_draws=parameters.requested_retained_draws;
+    'parameter_smoothing',parameter_smoothing);
+if strcmp(result.inference_mode,'fixed_parameter_smoothing')
+    if strcmp(parameter_smoothing,'draws')
+        metadata.parameter_uncertainty_limitation='One conditional sweep per saved variance draw does not generally sample the exact posterior mixture.';
+    else
+        metadata.parameter_uncertainty_limitation='Bands condition on posterior-mean delta/gamma; mu is resampled.';
+    end
 end
 result.inference=metadata;
 result.paths.parameters=parameters.path;
@@ -120,16 +104,6 @@ write_json(manifest_path,manifest);
 temporary=[tempname(run_dir),'.mat'];
 save(temporary,'result','-v7.3');
 movefile(temporary,fullfile(run_dir,[cfg.file_prefix 'result.mat']),'f');
-end
-
-function text=parameter_summary_text(parameter_smoothing,inference_mode)
-if strcmp(inference_mode,'parameter_estimation')
-    text='Joint posterior draws of mu, delta=sig2h, gamma=sig2r and stochastic h/r.';
-elseif strcmp(parameter_smoothing,'draws')
-    text='Approximate cycling of retained delta=sig2h and gamma=sig2r draws; static mu resampled.';
-else
-    text='Posterior mean innovation variances delta=sig2h and gamma=sig2r; static mu resampled.';
-end
 end
 
 function require_retained(result)

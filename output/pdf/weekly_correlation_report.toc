@@ -1,9 +1,0 @@
-\contentsline {section}{Executive summary}{1}{section*.1}%
-\contentsline {section}{\numberline {1}Data and weekly alignment}{2}{section.1}%
-\contentsline {section}{\numberline {2}Descriptive return results}{2}{section.2}%
-\contentsline {section}{\numberline {3}Stationarity of weekly returns}{4}{section.3}%
-\contentsline {section}{\numberline {4}Joint Bayesian correlation model}{4}{section.4}%
-\contentsline {subsection}{\numberline {4.1}Observation and state equations}{4}{subsection.4.1}%
-\contentsline {subsection}{\numberline {4.2}Prior definitions}{5}{subsection.4.2}%
-\contentsline {section}{\numberline {5}Sampler run}{5}{section.5}%
-\contentsline {section}{\numberline {6}Run diagnostics}{6}{section.6}%

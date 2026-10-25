@@ -1,10 +1,9 @@
 function result = dsc_sample(panel,priors,cfg,run_dir)
-% Constant-mean p=0 DSC smoother. All files belong to one chain.
+% Constant-mean DSC smoother. All files belong to one chain.
 % Observation innovations are conditionally independent through time given
 % stochastic volatility/correlations; no time-varying mean or mean covariance.
 % A time limit aborts an unfinished sweep; only completed sweeps commit.
 started=tic;
-if cfg.p~=0, error('dsc:UnsupportedVAR','Only p=0 is implemented.'); end
 Y=panel.returns; [T,m]=size(Y); nr=m*(m-1)/2;
 if ~isequal(size(panel.observation_mask),size(Y))||m<2, error('dsc:PanelShape','Invalid panel/mask dimensions.'); end
 mask=logical(panel.observation_mask)&isfinite(Y);
@@ -30,6 +29,8 @@ end
 cfg.mean_model='constant';
 schema='constant_mu_v1';
 [mu0,mu_cov0]=mean_prior(priors,m);
+[prior_mean_h,prior_scale_h]=innovation_prior(priors,'h',m);
+[prior_mean_r,prior_scale_r]=innovation_prior(priors,'r',nr);
 if ~isfield(cfg,'mean_backend'), cfg.mean_backend='auto'; end
 cfg.mean_backend=validatestring(cfg.mean_backend,{'auto','native','matlab'});
 if strcmp(cfg.mean_backend,'auto')
@@ -167,15 +168,16 @@ else
     state.h=repmat(priors.mh0',T,1);
     state.r=repmat(priors.mr0',T,1);
     if cfg.estimate_parameters
-        state.sig2h=priors.sig2h_mean*ones(1,m);
-        state.sig2r=priors.sig2r_mean*ones(1,nr);
+        state.sig2h=prior_mean_h;
+        state.sig2r=prior_mean_r;
     else
         state.sig2h=cfg.fixed_parameters.sig2h;
         state.sig2r=cfg.fixed_parameters.sig2r;
         if isfield(cfg.fixed_parameters,'mu'), state.mu=cfg.fixed_parameters.mu; end
     end
     if cfg.randomize_initial_state
-        state=dispersed_initial_state(state,priors,cfg.estimate_parameters,T,m,nr,mu0,mu_cov0);
+        state=dispersed_initial_state(state,priors,cfg.estimate_parameters,T,m,nr,mu0,mu_cov0, ...
+            prior_scale_h,prior_scale_r);
     end
     completed=0; saved=0; next_chunk=1; buffer=empty_buffer;
     parameter_sums=struct('mu',zeros(1,m),'sig2h',zeros(1,m), ...
@@ -238,7 +240,7 @@ while completed<cfg.max_iterations&&~(isfield(cfg,'resume_finalize_only')&&cfg.r
         if cfg.estimate_parameters
             stage_name='correlation_variance'; stage=tic;
             state.sig2r=draw_variances(state.r,state.sig2r,priors.mr0, ...
-                priors.r0_scale,priors.ig_shape,priors.ig_scale_r);
+                priors.r0_scale,priors.ig_shape,prior_scale_r);
             timing.correlation_variance=timing.correlation_variance+toc(stage);
         end
         stage_name='volatility'; stage=tic; ll=cached_likelihood(residual,state.h,cache_new,mask); h_proposals=0; h_invalid=0;
@@ -261,7 +263,7 @@ while completed<cfg.max_iterations&&~(isfield(cfg,'resume_finalize_only')&&cfg.r
         if cfg.estimate_parameters
             stage_name='volatility_variance'; stage=tic;
             state.sig2h=draw_variances(state.h,state.sig2h,priors.mh0, ...
-                priors.h0_scale,priors.ig_shape,priors.ig_scale_h);
+                priors.h0_scale,priors.ig_shape,prior_scale_h);
             timing.volatility_variance=timing.volatility_variance+toc(stage);
         end
         check_time();
@@ -395,11 +397,36 @@ S0=(double(S0)+double(S0)')/2;
 if bad, error('dsc:ConstantMeanPrior','The constant-mean prior covariance must be positive definite.'); end
 end
 
-function state=dispersed_initial_state(state,priors,estimate_parameters,T,m,nr,mu0,S0)
+function [prior_mean,scale]=innovation_prior(priors,kind,width)
+% Normalize working vectors only: keep legacy scalar priors intact in saved
+% identities, while new calibration supplies one scale for every coordinate.
+mean_name=['sig2' kind '_mean']; scale_name=['ig_scale_' kind];
+if ~all(isfield(priors,{mean_name,scale_name,'ig_shape'}))|| ...
+        ~isnumeric(priors.ig_shape)||~isreal(priors.ig_shape)|| ...
+        ~isscalar(priors.ig_shape)||~isfinite(priors.ig_shape)||priors.ig_shape<=1
+    error('dsc:InnovationPrior','A finite inverse-gamma shape greater than one is required.');
+end
+prior_mean=prior_vector(priors.(mean_name),width);
+scale=prior_vector(priors.(scale_name),width);
+if any(abs(prior_mean-scale/(priors.ig_shape-1))>1e-12*max(1,abs(prior_mean)))
+    error('dsc:InnovationPrior','Innovation prior means and inverse-gamma scales disagree.');
+end
+end
+
+function value=prior_vector(value,width)
+if ~isnumeric(value)||~isreal(value)||~isvector(value)|| ...
+        ~any(numel(value)==[1 width])||any(~isfinite(value(:)))||any(value(:)<=0)
+    error('dsc:InnovationPrior','Innovation prior means/scales must be positive finite scalars or coordinate vectors.');
+end
+value=double(value(:)');
+if isscalar(value), value=repmat(value,1,width); end
+end
+
+function state=dispersed_initial_state(state,priors,estimate_parameters,T,m,nr,mu0,S0,scale_h,scale_r)
 % Independently seeded parameter draws and bounded state perturbations.
 if estimate_parameters
-    state.sig2h=1./gamrnd(priors.ig_shape*ones(m,1),ones(m,1)/priors.ig_scale_h)';
-    state.sig2r=1./gamrnd(priors.ig_shape*ones(nr,1),ones(nr,1)/priors.ig_scale_r)';
+    state.sig2h=1./gamrnd(priors.ig_shape*ones(m,1),1./scale_h(:))';
+    state.sig2r=1./gamrnd(priors.ig_shape*ones(nr,1),1./scale_r(:))';
 end
 parameters=validate_fixed_parameters(struct('sig2h',state.sig2h,'sig2r',state.sig2r),m,nr);
 state.sig2h=parameters.sig2h; state.sig2r=parameters.sig2r;
@@ -623,7 +650,7 @@ end
 function s=draw_variances(path,s,mu,c,shape,scale)
 T=size(path,1); changes=diff(path,1,1); posterior_shape=(T-1)/2+shape;
 for j=1:size(path,2)
-    posterior_scale=sum(changes(:,j).^2)/2+scale;
+    posterior_scale=sum(changes(:,j).^2)/2+scale(j);
     proposal=1/gamrnd(posterior_shape,1/posterior_scale);
     d=path(1,j)-mu(j);
     logratio=-.5*log(proposal/s(j))-.5*d*d/(c+1)*(1/proposal-1/s(j));

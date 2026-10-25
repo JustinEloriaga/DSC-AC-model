@@ -26,8 +26,9 @@ end
 if isfield(result,'saved_draws')&&~isequal(result.saved_draws,count)
     error('dsc:ParametersDraws','Retained parameter count differs from the saved posterior draw count.');
 end
-if ~isstruct(cfg)||~isscalar(cfg)||~isfield(cfg,'p')||~isequal(cfg.p,0)
-    error('dsc:ParametersConfig','Parameter reuse currently supports the joint p=0 model.');
+if ~isstruct(cfg)||~isscalar(cfg)||~isfield(cfg,'mean_model')|| ...
+        ~strcmp(string(cfg.mean_model),'constant')
+    error('dsc:ParametersConfig','Parameter reuse requires the constant-mean model.');
 end
 fields={'dates','returns','observation_mask','tickers','pair_i','pair_j','source_hash'};
 if nargin<6||~isstruct(calibration_panel)||~isscalar(calibration_panel)|| ...
@@ -137,7 +138,7 @@ end
 % The filename prefix is the sole run identity. Keep the legacy field out of
 % new bundles so every run-linked artifact is identified consistently.
 parameters.estimation_config=struct();
-for field={'p','seed','chain_id','burnin','thin','max_iterations','prior_weeks', ...
+for field={'seed','chain_id','burnin','thin','max_iterations','prior_weeks', ...
         'shrinkage','calibration_windows','calibration_window','ig_shape','mean_model','mean_backend', ...
         'num_chains','parallel_chains', ...
         'correlation_backend','correlation_threads','file_prefix'}

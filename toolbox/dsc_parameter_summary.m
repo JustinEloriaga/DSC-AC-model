@@ -45,29 +45,33 @@ if bad, error('dsc:ParameterSummaryPriors','Normal prior covariance must be posi
 if ~all(isfield(priors,{'ig_shape','ig_scale_h','ig_scale_r'}))
     error('dsc:ParameterSummaryPriors','Missing inverse-gamma shape or scale.');
 end
-[hmean,hstd]=inverse_gamma_moments(priors.ig_shape,priors.ig_scale_h);
-[rmean,rstd]=inverse_gamma_moments(priors.ig_shape,priors.ig_scale_r);
+[hmean,hstd]=inverse_gamma_moments(priors.ig_shape,priors.ig_scale_h,m);
+[rmean,rstd]=inverse_gamma_moments(priors.ig_shape,priors.ig_scale_r,nr);
 Parameter=[repmat("mu",m,1);repmat("sig2h",m,1);repmat("sig2r",nr,1)];
 Series=[tickers;tickers;tickers(pair_i(:))+" / "+tickers(pair_j(:))];
 PriorDistribution=[repmat("Normal",m,1);repmat("InverseGamma(shape,scale)",m+nr,1)];
-PriorMean=[double(mu0(:));repmat(hmean,m,1);repmat(rmean,nr,1)];
-PriorStd=[sqrt(diag(double(covariance)));repmat(hstd,m,1);repmat(rstd,nr,1)];
+PriorMean=[double(mu0(:));hmean;rmean];
+PriorStd=[sqrt(diag(double(covariance)));hstd;rstd];
 values=[double(draws.mu) double(draws.sig2h) double(draws.sig2r)];
 PosteriorMean=mean(values,1)';
 PosteriorStd=std(values,0,1)';
 summary=table(Parameter,Series,PriorDistribution,PriorMean,PriorStd,PosteriorMean,PosteriorStd);
 end
 
-function [prior_mean,prior_std]=inverse_gamma_moments(shape,scale)
+function [prior_mean,prior_std]=inverse_gamma_moments(shape,scale,width)
 if ~isnumeric(shape)||~isreal(shape)||~isscalar(shape)||~isfinite(shape)||shape<=1|| ...
-        ~isnumeric(scale)||~isreal(scale)||~isscalar(scale)||~isfinite(scale)||scale<=0
-    error('dsc:ParameterSummaryPriors','Inverse-gamma shape must exceed one and scale must be positive finite scalars.');
+        ~isnumeric(scale)||~isreal(scale)||~isvector(scale)|| ...
+        ~(isscalar(scale)||numel(scale)==width)||any(~isfinite(scale(:)))||any(scale(:)<=0)
+    error('dsc:ParameterSummaryPriors','Inverse-gamma shape must be a finite scalar exceeding one; scales must be positive finite scalars or match their state coordinates.');
 end
-shape=double(shape); scale=double(scale);
+shape=double(shape); scale=double(scale(:));
+% Historical saved priors used one shared scale. Broadcast only locally;
+% coordinate-specific scales retain their saved series/pair ordering.
+if isscalar(scale), scale=repmat(scale,width,1); end
 prior_mean=scale/(shape-1);
 if shape>2
     prior_std=scale/((shape-1)*sqrt(shape-2));
 else
-    prior_std=Inf; % The mean exists but the variance is infinite.
+    prior_std=Inf(width,1); % The mean exists but the variance is infinite.
 end
 end
