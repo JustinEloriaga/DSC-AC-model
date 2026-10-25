@@ -90,7 +90,7 @@ end
 function b=expand_report(b,panel,path)
 % Final reports store parameter draws once, in their original joint chunks.
 if ~isfield(b,'storage')||~strcmp(b.storage,'parameter_report_v1'), return; end
-required={'manifest_file','parameter_chunk_files','prior_manifest_section', ...
+required={'manifest_file','parameter_chunk_files', ...
     'calibration_sample_sha256', ...
     'training_sample_sha256','calibration_weeks','training_dates','tickers', ...
     'pair_i','pair_j','retained_draws','chain_ids','retained_draws_per_chain'};
@@ -113,23 +113,34 @@ if ~strcmp(dsc_sample_fingerprint(cal),b.calibration_sample_sha256)|| ...
 end
 b.calibration_returns=cal.returns; b.calibration_mask=logical(cal.observation_mask);
 b.training_returns=train.returns; b.training_mask=logical(train.observation_mask);
-try
-    manifest=jsondecode(fileread(b.manifest_file));
-    section=char(b.prior_manifest_section);
-    if strcmp(section,'priors'), p=manifest.priors;
-    elseif strcmp(section,'parameter_estimation'), p=manifest.parameter_estimation.priors;
-    else, error('dsc:ParametersSchema','Unknown prior manifest section.'); end
-    p.tickers=b.tickers;
-    for name={'mu0','mh0','mr0'}, p.(name{1})=p.(name{1})(:); end
-    for name={'initial_dates','calibration_dates','likelihood_start_date'}
-        if isfield(p,name{1})
-            p.(name{1})=datetime(string(p.(name{1})),'InputFormat','yyyy-MM-dd');
-            p.(name{1})=p.(name{1})(:);
+if ~isfield(b,'priors')
+    % Legacy reports stored their original priors in a manifest section.
+    % Never reconstruct or recalibrate missing saved priors from current data.
+    try
+        if ~isfield(b,'prior_manifest_section')
+            error('dsc:ParametersSchema','Saved calibrated priors are missing.');
         end
+        manifest=jsondecode(fileread(b.manifest_file));
+        section=char(b.prior_manifest_section);
+        if strcmp(section,'priors')
+            p=manifest.priors;
+        elseif strcmp(section,'parameter_estimation')
+            p=manifest.parameter_estimation.priors;
+        else
+            error('dsc:ParametersSchema','Unknown prior manifest section.');
+        end
+        p.tickers=b.tickers;
+        for name={'mu0','mh0','mr0'}, p.(name{1})=p.(name{1})(:); end
+        for name={'initial_dates','calibration_dates','likelihood_start_date'}
+            if isfield(p,name{1})
+                p.(name{1})=datetime(string(p.(name{1})),'InputFormat','yyyy-MM-dd');
+                p.(name{1})=p.(name{1})(:);
+            end
+        end
+        b.priors=p;
+    catch problem
+        error('dsc:ParametersCorrupt','Cannot expand parameter report %s: %s',path,problem.message);
     end
-    b.priors=p;
-catch problem
-    error('dsc:ParametersCorrupt','Cannot expand parameter report %s: %s',path,problem.message);
 end
 b.parameter_draws=report_draws(b,path);
 end

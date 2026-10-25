@@ -1,7 +1,7 @@
 function [figure_paths,plot_summary] = plot_bayes_correlation_paths(run_dir,file_prefix)
 %PLOT_BAYES_CORRELATION_PATHS Plot pooled and chain-specific P(i,j,t) means.
 % Pools retained post-warm-up draws while preserving original chain identity.
-% Uses direct chunks or the coordinator summary's chain_dirs. The colored
+% Uses direct chunks, prefixed flat chunks or the coordinator chain_dirs. The colored
 % vertical bands use Figure 1's continuous red-white-blue correlation scale.
 if nargin<1 || strlength(string(run_dir))==0
     error('DSC:RunDir','Provide a sampler run directory.');
@@ -10,6 +10,10 @@ run_dir = char(run_dir);
 if ~isfolder(run_dir), error('DSC:RunDir','Provide an existing sampler run directory.'); end
 if nargin<2, file_prefix=''; end
 file_prefix=validate_file_prefix(file_prefix);
+manifest=struct();
+manifest_path=fullfile(run_dir,[file_prefix 'run_manifest.json']);
+if isfile(manifest_path), manifest=jsondecode(fileread(manifest_path)); end
+parameters=read_parameter_report(run_dir,file_prefix,manifest);
 summary_path = fullfile(run_dir,[file_prefix 'pilot_summary.json']);
 result_path=fullfile(run_dir,[file_prefix 'result.mat']);
 if isfile(result_path)
@@ -22,25 +26,24 @@ elseif exist(summary_path,'file')
     run_summary = jsondecode(fileread(summary_path));
 else
     run_summary=struct();
-    manifest_path=fullfile(run_dir,[file_prefix 'run_manifest.json']);
     if isfile(manifest_path)
-        manifest=jsondecode(fileread(manifest_path));
         if isfield(manifest,'run_summary')
             if ~isstruct(manifest.run_summary)||~isscalar(manifest.run_summary)
                 error('DSC:PathIdentity','The manifest run summary is invalid.');
             end
             run_summary=manifest.run_summary;
-            run_summary.final_output_schema='joint_outputs_v1';
         end
     end
 end
+[retention,run_summary]=read_retention_settings(manifest,parameters,run_summary);
 [P,identity,iterations,draw_chain_ids,chain_dirs,chain_ids,retained_draws_per_chain]= ...
-    read_chain_draws(run_dir,run_summary,file_prefix);
+    read_chain_draws(run_dir,run_summary,file_prefix,parameters,retention);
 if size(P,3)<2, error('DSC:TooFewDraws','At least two retained draws are needed.'); end
 dates=identity.dates; tickers=string(identity.tickers);
 pair_i=identity.pair_i; pair_j=identity.pair_j;
 warmup=max(0,min(iterations)-1);
 if isfield(run_summary,'burnin'), warmup=run_summary.burnin; end
+if ~isempty(retention.burnin), warmup=retention.burnin; end
 if ~isnumeric(warmup)||~isscalar(warmup)||~isfinite(warmup)||warmup<0||warmup~=floor(warmup)|| ...
         any(iterations<=warmup)|| ...
         (isfield(run_summary,'saved_draws')&&run_summary.saved_draws~=size(P,3))|| ...
@@ -57,7 +60,7 @@ chain_means=zeros(size(P,1),size(P,2),numel(chain_ids),'like',P);
 for c=1:numel(chain_ids)
     chain_means(:,:,c)=mean(P(:,:,draw_chain_ids==chain_ids(c)),3);
 end
-inference=read_inference(run_dir,dates,run_summary,file_prefix);
+inference=read_inference(run_dir,dates,run_summary,file_prefix,manifest,parameters);
 if ~isempty(inference)&& ...
         ((isfield(inference,'num_chains')&&inference.num_chains~=numel(chain_ids))|| ...
         (isfield(inference,'retained_draws_per_chain')&& ...
@@ -68,8 +71,9 @@ draw_note=sprintf('%d pooled retained draws from %d chain(s) | %d warm-up iterat
     size(P,3),numel(chain_ids),warmup);
 
 fig_dir = fullfile(run_dir,'figures');
-if is_final_compact_output(run_summary)||~isfolder(fig_dir), fig_dir=run_dir; end
-if ~is_final_compact_output(run_summary)
+compact_output=~isempty(file_prefix)||is_final_compact_output(run_summary);
+if compact_output||~isfolder(fig_dir), fig_dir=run_dir; end
+if ~compact_output
     save(fullfile(run_dir,[file_prefix 'posterior_correlation_bands.mat']), ...
         'lower','mean_path','upper','dates','tickers','pair_i','pair_j','iterations','inference', ...
         'draw_chain_ids','chain_ids','chain_dirs','retained_draws_per_chain','warmup_per_chain','-v7.3');
@@ -108,11 +112,26 @@ if numel(chain_ids)>1
 end
 end
 
-function [P,identity,iterations,draw_ids,dirs,ids,counts]=read_chain_draws(run_dir,summary,default_prefix)
+function [P,identity,iterations,draw_ids,dirs,ids,counts]=read_chain_draws(run_dir,summary,default_prefix,parameters,retention)
 dirs={run_dir};
 if isfield(summary,'chain_dirs')
     dirs=summary.chain_dirs;
     if ischar(dirs)||isstring(dirs), dirs=cellstr(dirs); end
+end
+if ~iscell(dirs)||isempty(dirs)||~all(cellfun(@(x)ischar(x)&&isrow(x)&&~isempty(x),dirs))
+    error('DSC:PathIdentity','The sampler summary must contain nonempty chain directory paths.');
+end
+if ~isfield(summary,'chain_dirs')&&isfield(summary,'chain_file_prefixes')
+    prefixes=summary.chain_file_prefixes;
+    if ischar(prefixes)||isstring(prefixes), prefixes=cellstr(prefixes); end
+    summary.chain_file_prefixes=prefixes;
+    dirs=repmat({run_dir},1,numel(prefixes));
+elseif ~isfield(summary,'chain_file_prefixes')
+    if ~isfield(summary,'chain_dirs')|| ...
+            all(cellfun(@(p)strcmp(char(java.io.File(p).getCanonicalPath()), ...
+            char(java.io.File(run_dir).getCanonicalPath())),dirs))
+        [dirs,summary.chain_file_prefixes]=discover_chain_files(run_dir,default_prefix);
+    end
 end
 if ~iscell(dirs)||isempty(dirs)||~all(cellfun(@(x)ischar(x)&&isrow(x)&&~isempty(x),dirs))
     error('DSC:PathIdentity','The sampler summary must contain nonempty chain directory paths.');
@@ -134,8 +153,8 @@ keys=cellfun(@(p,f)[p filesep f],canonical,prefixes,'UniformOutput',false);
 if numel(unique(keys))~=numel(dirs)
     error('DSC:PathIdentity','Each posterior chain directory and filename-prefix identity must be distinct.');
 end
-% Production summaries declare the retained counts. Allocate the pooled cube
-% once rather than copying its accumulated history for every loaded chunk.
+% Use saved summary or MAT counts to allocate the pooled cube once rather
+% than copying its accumulated history for every loaded chunk.
 declared_counts=[]; declared_total=[];
 if isfield(summary,'saved_draws_per_chain')
     declared_counts=summary.saved_draws_per_chain;
@@ -155,6 +174,13 @@ if isfield(summary,'saved_draws')
     end
     declared_total=value;
 end
+if isfield(parameters,'retained_draws')
+    value=parameters.retained_draws;
+    if ~valid_count(value,1)||(~isempty(declared_total)&&declared_total~=value)
+        error('DSC:PathDraws','Invalid or inconsistent retained draw count in the parameter report.');
+    end
+    declared_total=value;
+end
 P=[]; identity=[]; iterations=[]; draw_ids=[]; ids=nan(1,numel(dirs)); counts=zeros(1,numel(dirs));
 offset=0; chunk_values={}; chunk_iterations={}; chunk_ids={};
 for c=1:numel(dirs)
@@ -166,8 +192,11 @@ for c=1:numel(dirs)
         if isempty(token), error('DSC:PathDraws','Invalid posterior chunk filename.'); end
         numbers(n)=str2double(token{1});
     end
-    if numel(unique(numbers))~=numel(numbers), error('DSC:PathDraws','Duplicate chunk indices.'); end
+    if ~isequal(sort(numbers),1:numel(numbers))
+        error('DSC:PathDraws','Chunk indices must be consecutive positive integers starting at one.');
+    end
     [~,order]=sort(numbers); files=files(order); last_iteration=0;
+    if ~isempty(retention.burnin), last_iteration=retention.burnin; end
     for n=1:numel(files)
         % A chunk also contains the full h paths and parameter draws. Release
         % the previous struct before load materializes the next chunk.
@@ -179,7 +208,7 @@ for c=1:numel(dirs)
         if ~isstruct(chunk)||~isscalar(chunk)||~all(isfield(chunk,fields))
             error('DSC:PathIdentity','A posterior chunk is missing required identity or draw fields.');
         end
-        current=struct('dates',chunk.dates,'tickers',chunk.tickers, ...
+        current=struct('dates',chunk.dates,'tickers',{chunk.tickers}, ...
             'pair_i',chunk.pair_i,'pair_j',chunk.pair_j,'compact', ...
             isfield(chunk,'mu')||(isfield(chunk,'schema')&&strcmp(chunk.schema,'constant_mu_v1')));
         if isempty(identity), identity=current;
@@ -198,6 +227,12 @@ for c=1:numel(dirs)
         if ~isnumeric(index)||~isreal(index)||isempty(index)||any(~isfinite(index))|| ...
                 any(index~=floor(index))||index(1)<=last_iteration||any(diff(index)<=0)
             error('DSC:PathDraws','Retained iterations must increase strictly within each original chain.');
+        end
+        if ~isempty(retention.thin)&& ...
+                ((~isempty(retention.burnin)||n>1)&& ...
+                any(diff([last_iteration index])~=retention.thin)|| ...
+                any(diff(index)~=retention.thin))
+            error('DSC:PathDraws','Saved iterations disagree with per-chain warm-up and thinning.');
         end
         T=numel(chunk.dates); m=numel(chunk.tickers); nr=m*(m-1)/2;
         [ii,jj]=find(tril(true(m),-1)); values=chunk.P_pairs;
@@ -255,6 +290,124 @@ elseif offset~=declared_total
 end
 if numel(unique(ids))~=numel(ids)
     error('DSC:PathIdentity','Posterior directories must have distinct original chain IDs.');
+end
+validate_parameter_chain_counts(parameters,ids,counts,identity);
+end
+
+function parameters=read_parameter_report(root,prefix,manifest)
+parameters=struct(); path=fullfile(root,[prefix 'parameters.mat']);
+if isfield(manifest,'outputs')&&isstruct(manifest.outputs)&&isfield(manifest.outputs,'parameters')
+    value=manifest.outputs.parameters;
+    if ~((ischar(value)&&isrow(value)&&~isempty(value))|| ...
+            (isstring(value)&&isscalar(value)&&strlength(value)>0))
+        error('DSC:PathIdentity','The saved parameter path must be scalar text.');
+    end
+    path=char(value);
+    if ~java.io.File(path).isAbsolute(), path=fullfile(root,path); end
+end
+if ~isfile(path), return; end
+loaded=load(path,'parameters');
+if ~isfield(loaded,'parameters')||~isstruct(loaded.parameters)||~isscalar(loaded.parameters)
+    error('DSC:PathIdentity','The saved parameter report is invalid.');
+end
+parameters=loaded.parameters;
+end
+
+function [settings,summary]=read_retention_settings(manifest,parameters,summary)
+settings=struct('burnin',[],'thin',[]);
+sources={summary};
+if isfield(manifest,'config'), sources{end+1}=manifest.config; end
+if isfield(parameters,'retention_config'), sources{end+1}=parameters.retention_config;
+elseif isfield(parameters,'estimation_config'), sources{end+1}=parameters.estimation_config; end
+names={{'burnin','WarmupIterations'},{'thin','Thin'}}; keys={'burnin','thin'};
+for k=1:numel(keys)
+    for s=1:numel(sources)
+        source=sources{s};
+        if ~isstruct(source)||~isscalar(source)
+            error('DSC:PathDraws','Saved retention settings must be scalar structures.');
+        end
+        for f=1:numel(names{k})
+            name=names{k}{f};
+            if ~isfield(source,name), continue; end
+            value=source.(name);
+            if ~valid_count(value,k-1)|| ...
+                    (~isempty(settings.(keys{k}))&&settings.(keys{k})~=value)
+                error('DSC:PathDraws','Invalid or inconsistent saved warm-up/thinning settings.');
+            end
+            settings.(keys{k})=value;
+        end
+    end
+end
+% These are actual saved counts, unlike the requested public NumChains and
+% PerDraw options. Keep them in memory; never restore removed JSON fields.
+if isfield(parameters,'publication')&&isstruct(parameters.publication)&&isscalar(parameters.publication)
+    for key={'saved_draws_per_chain','chain_ids','num_chains'}
+        name=key{1};
+        if ~isfield(summary,name)&&isfield(parameters.publication,name)
+            summary.(name)=parameters.publication.(name);
+        end
+    end
+end
+end
+
+function tf=valid_count(value,minimum)
+tf=isnumeric(value)&&isreal(value)&&isscalar(value)&&isfinite(value)&& ...
+    value>=minimum&&value==floor(value);
+end
+
+function [dirs,prefixes]=discover_chain_files(root,prefix)
+direct=dir(fullfile(root,[prefix 'posterior_chunk_*.mat']));
+files=dir(fullfile(root,[prefix 'chain_*_posterior_chunk_*.mat']));
+if ~isempty(direct)&&~isempty(files)
+    error('DSC:PathIdentity','Both direct and chain-prefixed chunks match this run.');
+end
+if isempty(files), dirs={root}; prefixes={prefix}; return; end
+prefixes=cell(1,numel(files)); ordinals=zeros(1,numel(files));
+pattern=['^' regexptranslate('escape',prefix) 'chain_(\d+)_posterior_chunk_\d+\.mat$'];
+for k=1:numel(files)
+    token=regexp(files(k).name,pattern,'tokens','once');
+    if isempty(token)||~valid_count(str2double(token{1}),1)
+        error('DSC:PathIdentity','Invalid chain-prefixed posterior chunk filename.');
+    end
+    prefixes{k}=[prefix 'chain_' token{1} '_']; ordinals(k)=str2double(token{1});
+end
+[prefixes,first]=unique(prefixes,'stable'); ordinals=ordinals(first);
+if numel(unique(ordinals))~=numel(ordinals)
+    error('DSC:PathIdentity','Chain filename indices have ambiguous numeric identities.');
+end
+[~,order]=sort(ordinals); prefixes=prefixes(order);
+dirs=repmat({root},size(prefixes));
+end
+
+function validate_parameter_chain_counts(parameters,ids,counts,identity)
+if isfield(parameters,'retained_draws')&&parameters.retained_draws~=sum(counts)
+    error('DSC:PathDraws','Posterior chunks disagree with the parameter report total count.');
+end
+if isfield(parameters,'chain_ids')||isfield(parameters,'retained_draws_per_chain')
+    if ~all(isfield(parameters,{'chain_ids','retained_draws_per_chain'}))
+        error('DSC:PathIdentity','The parameter report needs both chain IDs and retained counts.');
+    end
+    expected=parameters.chain_ids(:); expected_counts=parameters.retained_draws_per_chain(:);
+    if ~isnumeric(expected)||~isreal(expected)||numel(expected)~=numel(ids)|| ...
+            any(~isfinite(expected))||any(expected<1)||any(expected~=floor(expected))|| ...
+            numel(unique(expected))~=numel(expected)||~isnumeric(expected_counts)|| ...
+            ~isreal(expected_counts)||numel(expected_counts)~=numel(ids)|| ...
+            any(~isfinite(expected_counts))||any(expected_counts<1)||any(expected_counts~=floor(expected_counts))
+        error('DSC:PathIdentity','The parameter report has invalid chain identities or counts.');
+    end
+    [found,order]=ismember(ids,expected);
+    if ~all(found)||~isequal(counts(:),expected_counts(order))
+        error('DSC:PathDraws','Saved chunks disagree with parameter-report chain identities/counts.');
+    end
+end
+for field={'tickers','pair_i','pair_j'}
+    key=field{1};
+    if isfield(parameters,key)&&~isequal(string(parameters.(key)(:)),string(identity.(key)(:)))
+        error('DSC:PathIdentity','Posterior chunk series or pair order differs from the parameter report.');
+    end
+end
+if isfield(parameters,'dates')&&~isequal(parameters.dates(:),identity.dates(:))
+    error('DSC:PathIdentity','Posterior chunk dates differ from the parameter report.');
 end
 end
 
@@ -323,35 +476,76 @@ title(layout,{title_text,subtitle,draw_note}, ...
 exportgraphics(fig,path,'ContentType','vector','Append',append_page);
 end
 
-function inference=read_inference(run_dir,dates,summary,prefix)
+function inference=read_inference(run_dir,dates,summary,prefix,manifest,parameters)
 inference=[];
 metadata_path=fullfile(run_dir,[prefix 'inference_metadata.json']);
-manifest_path=fullfile(run_dir,[prefix 'run_manifest.json']);
-if isfile(manifest_path), manifest=jsondecode(fileread(manifest_path));
-else, manifest=struct(); end
-if ~isfile(metadata_path)
-    if isfield(manifest,'inference')
-        inference=manifest.inference;
-    elseif isfield(summary,'inference_mode')&&strcmp(summary.inference_mode,'fixed_parameter_smoothing')
+if isfield(manifest,'inference'), inference=manifest.inference; end
+if isfile(metadata_path)
+    staged=jsondecode(fileread(metadata_path));
+    if isempty(inference), inference=staged;
+    else, inference=merge_inference_fields(inference,staged); end
+end
+if isfield(parameters,'inference')
+    if isempty(inference), inference=parameters.inference;
+    else, inference=merge_inference_fields(inference,parameters.inference); end
+end
+if isempty(inference)
+    if isfield(summary,'inference_mode')&&strcmp(summary.inference_mode,'fixed_parameter_smoothing')
         error('DSC:InferenceMetadata','Inference metadata is missing; cannot label conditional correlation paths.');
+    end
+    return
+end
+if ~isstruct(inference)||~isscalar(inference)|| ...
+        ~all(isfield(inference,{'parameter_estimation_start','parameter_estimation_end'}))
+    error('DSC:InferenceMetadata','Saved inference metadata must identify the parameter-estimation dates.');
+end
+% Compact public metadata contains dates. The private MAT report retains the
+% inference target and smoothing scope; older complete JSON remains valid.
+sources={parameters,summary};
+if isfield(parameters,'inference'), sources=[{parameters.inference} sources]; end
+for s=1:numel(sources)
+    source=sources{s};
+    if ~isstruct(source)||~isscalar(source)
+        error('DSC:InferenceMetadata','Private inference metadata must be a scalar structure.');
+    end
+    for key={'inference_mode','parameter_smoothing','smoothing_start','smoothing_end'}
+        name=key{1};
+        if isfield(source,name)
+            if isfield(inference,name)&&~isequaln(inference.(name),source.(name))
+                error('DSC:InferenceMetadata','Private and public inference metadata disagree.');
+            end
+            inference.(name)=source.(name);
+        end
+    end
+end
+if ~isfield(inference,'smoothing_end')
+    inference.smoothing_end=char(string(dates(end),'yyyy-MM-dd'));
+end
+if ~isfield(inference,'inference_mode')
+    conditional=isfield(parameters,'storage')&&strcmp(parameters.storage,'conditional_parameter_summary_v1');
+    if isfield(manifest,'config')&&isfield(manifest.config,'EstimateParameters')
+        conditional=conditional||isequal(manifest.config.EstimateParameters,false);
+    end
+    conditional=conditional||~strcmp(inference.parameter_estimation_end,inference.smoothing_end);
+    inference.inference_mode='parameter_estimation';
+    if conditional, inference.inference_mode='fixed_parameter_smoothing'; end
+end
+if ~isfield(inference,'parameter_smoothing')
+    if strcmp(inference.inference_mode,'parameter_estimation')
+        inference.parameter_smoothing='draws';
+    elseif isfield(manifest,'config')&&isfield(manifest.config,'ParameterSmoothing')
+        inference.parameter_smoothing=manifest.config.ParameterSmoothing;
     else
-        return
+        error('DSC:InferenceMetadata','The saved conditional run does not identify its parameter-smoothing scope.');
     end
-else
-    inference=jsondecode(fileread(metadata_path));
 end
-required={'inference_mode','parameter_file','parameters_estimated_at','parameter_estimation_start', ...
-    'parameter_estimation_end','parameter_estimation_draws','parameter_estimation_run', ...
-    'smoothing_end','parameter_smoothing'};
-if ~isstruct(inference)||~isscalar(inference)||~all(isfield(inference,required))|| ...
-        ~isfield(manifest,'inference')||~isequaln(inference,manifest.inference)
-    error('DSC:InferenceMetadata','Inference metadata and run manifest are missing fields or disagree.');
-end
-for k=[1 2 3 4 5 7 8]
-    value=inference.(required{k});
-    if ~(ischar(value)&&isrow(value)&&~isempty(value))
-        error('DSC:InferenceMetadata','Inference date, mode and source fields must be nonempty text.');
+for key={'parameter_estimation_start','parameter_estimation_end','smoothing_end','inference_mode','parameter_smoothing'}
+    value=inference.(key{1});
+    if ~((ischar(value)&&isrow(value)&&~isempty(value))|| ...
+            (isstring(value)&&isscalar(value)&&~ismissing(value)&&strlength(value)>0))
+        error('DSC:InferenceMetadata','Inference dates, mode and smoothing scope must be nonempty scalar text.');
     end
+    inference.(key{1})=char(value);
 end
 mode=inference.inference_mode;
 parameter_smoothing=inference.parameter_smoothing;
@@ -359,20 +553,22 @@ inference.parameter_uncertainty_in_bands= ...
     strcmp(mode,'parameter_estimation')||strcmp(parameter_smoothing,'draws');
 if ~ismember(mode,{'parameter_estimation','fixed_parameter_smoothing'})|| ...
         ~ismember(parameter_smoothing,{'draws','mean'})|| ...
-        ~isscalar(inference.parameter_estimation_draws)||inference.parameter_estimation_draws<2|| ...
-        ~isfinite(inference.parameter_estimation_draws)|| ...
-        inference.parameter_estimation_draws~=floor(inference.parameter_estimation_draws)
+        (isfield(inference,'parameter_estimation_draws')&& ...
+        ~valid_count(inference.parameter_estimation_draws,2))
     error('DSC:InferenceMetadata','Inference mode, retained parameter count or uncertainty scope is invalid.');
 end
 try
     start=datetime(inference.parameter_estimation_start,'InputFormat','yyyy-MM-dd');
     cutoff=datetime(inference.parameter_estimation_end,'InputFormat','yyyy-MM-dd');
     last=datetime(inference.smoothing_end,'InputFormat','yyyy-MM-dd');
-    estimated=datetime(inference.parameters_estimated_at,'InputFormat',"yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",'TimeZone','UTC');
+    if isfield(inference,'parameters_estimated_at')
+        estimated=datetime(inference.parameters_estimated_at,'InputFormat',"yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",'TimeZone','UTC');
+        if isnat(estimated), error('DSC:InferenceMetadata','Invalid parameter-estimation timestamp.'); end
+    end
 catch
     error('DSC:InferenceMetadata','Invalid dates in inference metadata.');
 end
-if any(isnat([start cutoff last]))||isnat(estimated)||start~=dates(1)||last~=dates(end)|| ...
+if any(isnat([start cutoff last]))||start~=dates(1)||last~=dates(end)|| ...
         cutoff<start||cutoff>last||~any(dates==cutoff)|| ...
         (strcmp(mode,'parameter_estimation')&&cutoff~=last)|| ...
         (isfield(summary,'inference_mode')&&~strcmp(summary.inference_mode,mode))|| ...
@@ -382,11 +578,13 @@ if any(isnat([start cutoff last]))||isnat(estimated)||start~=dates(1)||last~=dat
 end
 if isfield(inference,'calibration_weeks')
     n=inference.calibration_weeks;
-    if ~isscalar(n)||~isfinite(n)||n<1||n~=floor(n)|| ...
-            ~all(isfield(inference,{'calibration_start','calibration_end','smoothing_start','full_data_start'}))|| ...
-            ~strcmp(inference.smoothing_start,inference.parameter_estimation_start)|| ...
-            ~strcmp(inference.full_data_start,inference.calibration_start)|| ...
-            ~isfield(summary,'excluded_initial_weeks')||summary.excluded_initial_weeks~=n
+    if ~valid_count(n,1)|| ...
+            ~all(isfield(inference,{'calibration_start','calibration_end'}))|| ...
+            (isfield(inference,'smoothing_start')&& ...
+            ~strcmp(inference.smoothing_start,inference.parameter_estimation_start))|| ...
+            (isfield(inference,'full_data_start')&& ...
+            ~strcmp(inference.full_data_start,inference.calibration_start))|| ...
+            (isfield(summary,'excluded_initial_weeks')&&summary.excluded_initial_weeks~=n)
         error('DSC:InferenceMetadata','Calibration exclusion metadata is inconsistent.');
     end
     initial=datetime(inference.calibration_start,'InputFormat','yyyy-MM-dd');
@@ -394,6 +592,20 @@ if isfield(inference,'calibration_weeks')
     if isnat(initial)||isnat(final)||start~=final+calweeks(1)||final~=initial+calweeks(n-1)
         error('DSC:InferenceMetadata','Calibration and model dates must be adjacent, non-overlapping weekly blocks.');
     end
+end
+end
+
+function merged=merge_inference_fields(public,private)
+if ~isstruct(public)||~isscalar(public)||~isstruct(private)||~isscalar(private)
+    error('DSC:InferenceMetadata','Saved inference metadata must be scalar structures.');
+end
+merged=private; fields=fieldnames(public);
+for k=1:numel(fields)
+    name=fields{k};
+    if isfield(private,name)&&~isequaln(public.(name),private.(name))
+        error('DSC:InferenceMetadata','Saved inference metadata disagree on %s.',name);
+    end
+    merged.(name)=public.(name);
 end
 end
 
@@ -425,19 +637,4 @@ if nargin<1, n = 257; end
 anchors = [5 48 97; 33 102 172; 67 147 195; 146 197 222; 209 229 240; ...
     247 247 247; 253 219 199; 244 165 130; 214 96 77; 178 24 43; 103 0 31]/255;
 cmap = interp1(linspace(0,1,size(anchors,1)),anchors,linspace(0,1,n),'linear');
-end
-
-function write_json_local(path,value,raw_inference)
-fid = fopen(path,'w');
-assert(fid>=0,'DSC:WriteFailed','Cannot open %s',path);
-cleanup = onCleanup(@()fclose(fid));
-payload=jsonencode(value,PrettyPrint=true);
-if nargin>=3&&~isempty(raw_inference)
-    payload=[payload(1:end-1) ',"inference":' raw_inference '}'];
-end
-fprintf(fid,'%s\n',payload);
-end
-
-function value = boolean_text(value)
-if value, value='true'; else, value='false'; end
 end

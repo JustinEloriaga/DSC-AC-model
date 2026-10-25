@@ -12,11 +12,6 @@ end
 parameter_path=fullfile(root,[prefix 'parameters.mat']);
 source_parameter_file=char(result.paths.parameters);
 has_own_bundle=isfile(source_parameter_file)&&owned(source_parameter_file,root,prefix);
-stage=[];
-stage_path=fullfile(root,[prefix 'estimation_result.mat']);
-if isfile(stage_path)
-    loaded=load(stage_path,'result'); stage=loaded.result;
-end
 
 % Validate every retained draw against its chain and iteration before any
 % file is replaced. The chunks remain unchanged: parameters and paths form
@@ -29,14 +24,9 @@ if has_own_bundle
     report.calibration_sample_sha256=sample_fingerprint(parameters,'calibration');
     report.training_sample_sha256=sample_fingerprint(parameters,'training');
     report.posterior_std=parameter_std(parameters.parameter_draws);
-    if isempty(stage)
-        report.prior_manifest_section='priors';
-    else
-        report.prior_manifest_section='parameter_estimation';
-        manifest.parameter_estimation=struct('priors',json_dates(parameters.priors), ...
-            'run_summary',run_summary(stage));
-    end
-    report=remove_fields(report,{'priors','parameter_draws', ...
+    % Preserve the exact calibrated priors in MAT storage. Public manifests
+    % contain only reporting metadata and are not a source of saved priors.
+    report=remove_fields(report,{'prior_manifest_section','parameter_draws', ...
         'training_returns','training_mask','calibration_returns','calibration_mask'});
     report.parameter_chunk_files=parameter_chunks;
 else
@@ -50,23 +40,40 @@ else
         'posterior_std',parameter_std(draws), ...
         'retained_draws',numel(draws.chain_id), ...
         'parameter_chunk_files',{parameter_chunks}, ...
-        'prior_manifest_section','priors');
+        'priors',result.priors);
     report.prior_posterior_summary=dsc_parameter_summary(draws,result.priors, ...
         result.tickers,result.pair_i,result.pair_j);
     report.parameter_summary_metadata=struct( ...
         'posterior_source','Retained conditional-smoothing draws.', ...
         'posterior_std_convention','Sample standard deviation with n-1 denominator.');
+    report.dates=result.dates;
+    report.tickers=result.tickers;
+    report.pair_i=result.pair_i;
+    report.pair_j=result.pair_j;
+    report.chain_ids=result.chain_ids;
+    report.retained_draws_per_chain=result.saved_draws_per_chain;
+    report.retention_config=struct('burnin',cfg.burnin,'thin',cfg.thin, ...
+        'num_chains',cfg.num_chains,'max_iterations',cfg.max_iterations);
+end
+for name={'inference','inference_mode','parameter_smoothing','implementation','correlation_threads'}
+    key=name{1};
+    if isfield(result,key), report.(key)=result.(key); end
 end
 report.manifest_file=manifest_path;
 manifest.run_summary=run_summary(result);
 if isfield(result,'inference')
     manifest.inference=remove_fields(result.inference,{'estimation_convergence','state_convergence','parameter_smoothing'});
-    if has_own_bundle, manifest.inference.parameter_file=parameter_path; end
 end
 draw_chunks=owned_files(root,[prefix '*posterior_chunk_*.mat'],prefix);
+create_pdf=true;
+if isfield(cfg,'create_pdf'), create_pdf=cfg.create_pdf; end
+report.publication=struct('status',result.status,'num_chains',result.num_chains, ...
+    'chain_ids',result.chain_ids,'saved_draws_per_chain',result.saved_draws_per_chain, ...
+    'requested_retained_draws_per_chain',floor((cfg.max_iterations-cfg.burnin)/cfg.thin), ...
+    'create_pdf',create_pdf);
 % Complete all publications before deleting staging files. Each replacement
 % is atomic; failure leaves the original joint chunks and remaining sidecars.
-manifest=dsc_run_lifecycle('publishing',root,prefix,manifest);
+manifest=dsc_run_lifecycle('publishing',root,prefix,manifest,result);
 atomic_mat(parameter_path,'parameters',report,root,prefix);
 
 patterns={'*checkpoint.mat','*pilot_summary.json','*prior_summary.json', ...
@@ -86,8 +93,6 @@ end
 result.paths=struct('manifest',manifest_path,'parameters',parameter_path, ...
     'draw_chunks',{draw_chunks});
 result.figure_paths=strings(0,1); result.figure_pdf=''; result.report_pdf='';
-create_pdf=true;
-if isfield(cfg,'create_pdf'), create_pdf=cfg.create_pdf; end
 % Plot from the published joint chunks and manifest, without retaining a
 % duplicate bands MAT file. Cleanup has finished, so these PDFs are retained.
 if create_pdf
@@ -95,7 +100,7 @@ if create_pdf
     result.figure_pdf=char(result.figure_paths(1));
     result.paths.figures=result.figure_paths;
 end
-dsc_run_lifecycle('finish',root,prefix,manifest);
+dsc_run_lifecycle('finish',root,prefix,manifest,result);
 % Only fully published invocations can trigger retention. Failed estimation
 % and publication leave evidence for the next successful run to classify.
 try
@@ -232,18 +237,6 @@ summary=struct();
 names={'total_seconds','session_seconds','stage_seconds','stage_elapsed_seconds'};
 for k=1:numel(names)
     key=names{k}; if isfield(result,key), summary.(key)=result.(key); end
-end
-end
-
-function value=json_dates(value)
-if ~isstruct(value), return; end
-for key={'initial_dates','calibration_dates','likelihood_start_date'}
-    name=key{1};
-    if isfield(value,name)&&isdatetime(value.(name))
-        dates=string(value.(name),'yyyy-MM-dd');
-        if isscalar(dates), value.(name)=char(dates);
-        else, value.(name)=cellstr(dates); end
-    end
 end
 end
 

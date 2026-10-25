@@ -23,7 +23,6 @@ arguments
     options.OutputDirectory (1,1) string = ""
     options.SourceFile (1,1) string = ""
     options.VariableNames (1,:) string = ["NKYTR Index","SPXT Index","SX5T Index","TUKXG Index"]
-    options.EstimationEndDate (1,1) string = ""
 end
 
 if isnan(options.ChunkSize)
@@ -65,7 +64,6 @@ cfg.correlation_backend=char(options.CorrelationBackend);
 cfg.correlation_warm_start=true;
 cfg.correlation_threads=options.CorrelationThreads;
 cfg.estimate_parameters=options.EstimateParameters;
-cfg.estimation_end_date=char(options.EstimationEndDate);
 cfg.create_pdf=options.CreatePDF;
 cfg.parameter_dir=cfg.output_root;
 if ~isempty(dir(fullfile(cfg.parameter_dir, ...
@@ -95,10 +93,11 @@ try
     manifest=struct('equation','y_t = mu + D_t P_t^(1/2) z_t; z_t iid N(0,I)', ...
         'innovation_variances','sig2h governs h (delta) random walks; sig2r governs r (gamma) random walks', ...
         'config',manifest_options);
+    details=struct('priors',priors);
     if ~inference.estimate_parameters
-        manifest.inference=struct('parameter_file',inference.parameters.path);
+        details.inference=struct('parameter_file',inference.parameters.path);
     end
-    manifest=dsc_run_lifecycle('publishing',cfg.output_root,cfg.file_prefix,manifest);
+    manifest=dsc_run_lifecycle('publishing',cfg.output_root,cfg.file_prefix,manifest,details);
     result=dsc_run_inference(panel,priors,cfg,cfg.output_root,inference);
     if result.saved_draws<2
         error('DSC:TooFewRetainedDraws','Only %d retained draws; completed checkpoints were preserved.',result.saved_draws);

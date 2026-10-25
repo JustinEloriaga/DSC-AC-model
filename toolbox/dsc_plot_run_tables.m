@@ -39,6 +39,7 @@ if ~isfield(loaded,'parameters')||~isstruct(loaded.parameters)|| ...
     return
 end
 parameters=loaded.parameters;
+inference=table_inference(parameters,manifest);
 summary=parameters.prior_posterior_summary;
 required={'Parameter','Series','PriorDistribution','PriorMean','PriorStd','PosteriorMean','PosteriorStd'};
 if ~istable(summary)||~all(ismember(required,summary.Properties.VariableNames))||isempty(summary)
@@ -73,14 +74,17 @@ end
 section.note={ ...
     'Posterior moments pool retained parameter draws across chains; SD is marginal standard deviation.'};
 conditional=isfield(parameters,'storage')&&strcmp(parameters.storage,'conditional_parameter_summary_v1');
+conditional=conditional||(isfield(inference,'inference_mode')&& ...
+    strcmp(inference.inference_mode,'fixed_parameter_smoothing'));
+if isfield(manifest,'config')&&isstruct(manifest.config)&& ...
+        isfield(manifest.config,'EstimateParameters')
+    conditional=conditional||isequal(manifest.config.EstimateParameters,false);
+end
 if conditional
     section.title='Conditional parameter summary';
     section.headers(6:7)={'Cond. mean','Cond. SD'};
     smoothing='';
-    if isfield(manifest,'inference')&&isstruct(manifest.inference)&& ...
-            isfield(manifest.inference,'parameter_smoothing')
-        smoothing=char(manifest.inference.parameter_smoothing);
-    end
+    if isfield(inference,'parameter_smoothing'), smoothing=char(inference.parameter_smoothing); end
     if strcmp(smoothing,'mean')
         section.note={ ...
             'Conditional summary of retained smoothing draws; variance parameters are held fixed.', ...
@@ -94,26 +98,24 @@ if conditional
 end
 if all(isfield(parameters,{'estimation_start','estimation_end'}))
     first=date_text(parameters.estimation_start); last=date_text(parameters.estimation_end);
-elseif isfield(manifest,'inference')&&isstruct(manifest.inference)&& ...
-        all(isfield(manifest.inference,{'parameter_estimation_start','parameter_estimation_end'}))
-    first=date_text(manifest.inference.parameter_estimation_start);
-    last=date_text(manifest.inference.parameter_estimation_end);
+elseif all(isfield(inference,{'parameter_estimation_start','parameter_estimation_end'}))
+    first=date_text(inference.parameter_estimation_start);
+    last=date_text(inference.parameter_estimation_end);
 else
     first=''; last='';
 end
 if ~isempty(first)&&~isempty(last)
     section.note{end+1}=sprintf('Parameter estimation: %s to %s.',first,last);
 end
-if conditional&&isfield(manifest,'inference')&&isstruct(manifest.inference)&& ...
-        isfield(manifest.inference,'smoothing_end')
-    if isfield(manifest.inference,'smoothing_start')
-        first=date_text(manifest.inference.smoothing_start);
-    elseif isfield(manifest.inference,'parameter_estimation_start')
-        first=date_text(manifest.inference.parameter_estimation_start);
+if conditional&&isfield(inference,'smoothing_end')
+    if isfield(inference,'smoothing_start')
+        first=date_text(inference.smoothing_start);
+    elseif isfield(inference,'parameter_estimation_start')
+        first=date_text(inference.parameter_estimation_start);
     else
         first='';
     end
-    last=date_text(manifest.inference.smoothing_end);
+    last=date_text(inference.smoothing_end);
     if ~isempty(first)&&~isempty(last)
         section.note{end+1}=sprintf('Conditional smoothing: %s to %s.',first,last);
     end
@@ -123,6 +125,35 @@ section.note=[section.note { ...
     'Prior moments are analytic under empirical-Bayes priors calibrated from the data.', ...
     'mu: constant return mean; sig2h: log-variance-state innovation variance.', ...
     'sig2r: matrix-log correlation-coordinate innovation variance.'}];
+end
+
+function inference=table_inference(parameters,manifest)
+inference=struct();
+% Scope belongs to the saved private report. Full inference JSON is only a
+% compatibility fallback for historical reports that predate those fields.
+if isfield(manifest,'inference')&&isstruct(manifest.inference)&&isscalar(manifest.inference)
+    inference=manifest.inference;
+end
+if isfield(manifest,'config')&&isstruct(manifest.config)&& ...
+        isfield(manifest.config,'ParameterSmoothing')
+    inference.parameter_smoothing=manifest.config.ParameterSmoothing;
+end
+if isfield(parameters,'inference')
+    value=parameters.inference;
+    if ~isstruct(value)||~isscalar(value)
+        error('DSC:ParameterTable','The private inference metadata must be a scalar structure.');
+    end
+    fields=fieldnames(value);
+    for k=1:numel(fields), inference.(fields{k})=value.(fields{k}); end
+end
+for key={'inference_mode','parameter_smoothing'}
+    name=key{1};
+    if isfield(parameters,name), inference.(name)=parameters.(name); end
+end
+if isfield(parameters,'dates')&&isdatetime(parameters.dates)&&~isempty(parameters.dates)
+    if ~isfield(inference,'smoothing_start'), inference.smoothing_start=parameters.dates(1); end
+    if ~isfield(inference,'smoothing_end'), inference.smoothing_end=parameters.dates(end); end
+end
 end
 
 function value=date_text(value)
@@ -166,6 +197,13 @@ for r=1:numel(rows)
 end
 if isfield(report,'sample_start')&&isfield(report,'sample_end')
     section.title=sprintf('Return AR(1): initial prior calibration | %s to %s',report.sample_start,report.sample_end);
+elseif isfield(manifest,'inference')&&isstruct(manifest.inference)&& ...
+        all(isfield(manifest.inference,{'calibration_start','calibration_end'}))
+    first=date_text(manifest.inference.calibration_start);
+    last=date_text(manifest.inference.calibration_end);
+    if ~isempty(first)&&~isempty(last)
+        section.title=sprintf('Return AR(1): initial prior calibration | %s to %s',first,last);
+    end
 end
 section.note={ ...
     'x_t = a + rho*x_(t-1) + e_t; H0: rho = 0, two-sided standard-normal p-values.', ...

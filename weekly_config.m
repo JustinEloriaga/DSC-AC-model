@@ -1,5 +1,5 @@
 function cfg = weekly_config()
-%WEEKLY_CONFIG Reproducible defaults for the staged weekly research workflow.
+%WEEKLY_CONFIG Internal defaults for the production weekly estimator.
 root = fileparts(mfilename('fullpath'));
 cfg.source_file = fullfile(root,'data','yad_tickers_no_usdcnh_from_20030804.csv');
 cfg.start_date = '2003-08-04';

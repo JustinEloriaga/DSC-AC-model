@@ -1,4 +1,4 @@
-function manifest=dsc_run_lifecycle(action,root,prefix,manifest)
+function manifest=dsc_run_lifecycle(action,root,prefix,manifest,details)
 %DSC_RUN_LIFECYCLE Track ownership privately and publish the public manifest.
 root=char(root); prefix=char(prefix); action=char(action);
 assert(isfolder(root)&&~isempty(regexp(prefix,'^constant_mu_\d{8}T\d{9}_$','once')), ...
@@ -8,6 +8,7 @@ state_path=fullfile(root,[prefix 'run_state.json']);
 previous=struct();
 if isfile(path), previous=jsondecode(fileread(path)); end
 if nargin<4, manifest=previous; end
+if nargin<5, details=struct(); end
 if strcmp(action,'start')
     owner=process_owner();
 elseif isfile(state_path)
@@ -21,26 +22,36 @@ elseif strcmp(action,'stopped')
 else
     owner=process_owner();
 end
-remove_manifest_fields=intersect({'model','mean_model','source_file','tickers','lifecycle'},fieldnames(manifest));
-if ~isempty(remove_manifest_fields), manifest=rmfield(manifest,remove_manifest_fields); end
-if isfield(manifest,'return_ar1')
-    remove_fields=intersect({'calendar_weeks','hac_lag'},fieldnames(manifest.return_ar1));
-    if ~isempty(remove_fields), manifest.return_ar1=rmfield(manifest.return_ar1,remove_fields); end
-end
 if isfield(manifest,'config')
     manifest.config=public_options(manifest.config);
 end
 defaults=weekly_config();
 prior_values=struct('innovation_prior_mean_multiplier',defaults.innovation_prior_mean_multiplier, ...
     'ig_shape',defaults.ig_shape,'mu_prior_std_multiplier',defaults.mu_prior_std_multiplier);
-if isfield(manifest,'priors')
+if isfield(details,'priors')
+    p=details.priors;
+elseif isfield(manifest,'priors')
+    p=manifest.priors;
+else
+    p=struct();
+    if isfield(manifest,'prior_parameter_notes')
+        fields=fieldnames(prior_values);
+        for k=1:numel(fields)
+            key=fields{k};
+            if isfield(manifest.prior_parameter_notes,key)&& ...
+                    isfield(manifest.prior_parameter_notes.(key),'value')
+                p.(key)=manifest.prior_parameter_notes.(key).value;
+            end
+        end
+    end
+end
+if ~isempty(fieldnames(p))
     prior_fields=fieldnames(prior_values);
     for k=1:numel(prior_fields)
         field=prior_fields{k};
-        if isfield(manifest.priors,field), prior_values.(field)=manifest.priors.(field); end
+        if isfield(p,field), prior_values.(field)=p.(field); end
     end
     % Older saved priors encoded this multiplier only in their covariance.
-    p=manifest.priors;
     if ~isfield(p,'mu_prior_std_multiplier')&& ...
             all(isfield(p,{'mu_cov0','mh0','initial_complete_observations'}))
         factors=sqrt(p.initial_complete_observations*diag(p.mu_cov0)./exp(p.mh0(:)));
@@ -68,26 +79,41 @@ end
 if isfield(manifest,'inference')&&isfield(manifest.inference,'parameter_file')
     owner.parameter_file=manifest.inference.parameter_file;
 end
+if isfield(details,'inference')&&isfield(details.inference,'parameter_file')
+    owner.parameter_file=details.inference.parameter_file;
+end
+outcome='';
+if isfield(details,'status')
+    outcome=char(details.status);
+    owner.sampler_status=outcome;
+elseif isfield(manifest,'run_summary')&&isfield(manifest.run_summary,'status')
+    outcome=char(manifest.run_summary.status);
+elseif isfield(owner,'sampler_status')
+    outcome=char(owner.sampler_status);
+end
+% Removed public fields must never reappear from internal results, legacy
+% snapshots, or intermediate publication. Computational context stays in MAT
+% reports and this private ownership record.
+manifest=public_manifest(manifest);
 switch action
     case {'start','publishing'}
         owner.status='active';
     case 'finish'
         owner.status='incomplete';
-        if isfield(manifest,'run_summary')&&isfield(manifest.run_summary,'status')
-            switch char(manifest.run_summary.status)
-                case 'iteration_limit', owner.status='completed';
-                case 'time_limit', owner.status='stopped';
-                case 'failed', owner.status='failed';
-            end
-        elseif isfile(fullfile(root,[prefix 'parameters.mat'])) && ...
-                ~isempty(dir(fullfile(root,[prefix '*posterior_chunk_*.mat'])))
+        if strcmp(outcome,'time_limit')
+            owner.status='stopped';
+        elseif strcmp(outcome,'failed')
+            owner.status='failed';
+        elseif dsc_output_group_complete(root,prefix,manifest)
             owner.status='completed';
+        else
+            error('dsc:IncompletePublication', ...
+                'The run is missing a valid parameter report, requested draws or requested PDFs.');
         end
         owner.finished_at_utc=utc_now();
     case 'failed'
         owner.status='failed';
-        if isfield(manifest,'run_summary')&&isfield(manifest.run_summary,'status')&& ...
-                strcmp(manifest.run_summary.status,'time_limit')
+        if strcmp(outcome,'time_limit')
             owner.status='stopped';
         end
         summary_path=fullfile(root,[prefix 'pilot_summary.json']);
@@ -124,6 +150,38 @@ else
     % Register ownership before the first public snapshot is visible.
     atomic_json(state_path,owner,root,prefix);
     atomic_json(path,manifest,root,prefix);
+end
+end
+
+function manifest=public_manifest(manifest)
+manifest=keep_fields(manifest,{'equation','innovation_variances','config', ...
+    'prior_parameter_notes','inference','return_ar1','run_summary'});
+if isfield(manifest,'inference')
+    manifest.inference=keep_fields(manifest.inference,{ ...
+        'parameter_estimation_start','parameter_estimation_end', ...
+        'parameter_estimation_draws','parameter_estimation_run', ...
+        'calibration_weeks','calibration_start','calibration_end','full_data_start'});
+end
+if isfield(manifest,'return_ar1')
+    manifest.return_ar1=keep_fields(manifest.return_ar1, ...
+        {'schema','method','equation','null_hypothesis','rows'});
+    if isfield(manifest.return_ar1,'rows')
+        rows=manifest.return_ar1.rows;
+        extra=setdiff(fieldnames(rows),{'ticker','p_value'});
+        if ~isempty(extra), manifest.return_ar1.rows=rmfield(rows,extra); end
+    end
+end
+if isfield(manifest,'run_summary')
+    manifest.run_summary=keep_fields(manifest.run_summary, ...
+        {'total_seconds','session_seconds','stage_seconds','stage_elapsed_seconds'});
+end
+end
+
+function result=keep_fields(value,names)
+result=struct();
+for k=1:numel(names)
+    key=names{k};
+    if isfield(value,key), result.(key)=value.(key); end
 end
 end
 

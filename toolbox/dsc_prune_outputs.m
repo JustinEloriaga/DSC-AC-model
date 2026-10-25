@@ -67,14 +67,19 @@ end
 if isfield(manifest,'run_summary'), summary=manifest.run_summary;
 else, summary=read_json(fullfile(root,[prefix 'pilot_summary.json'])); end
 if ~isfield(summary,'status')
-    if complete_publication(manifest,summary,root,prefix), state='completed'; end
+    [complete,publication]=dsc_output_group_complete(root,prefix,manifest);
+    if complete
+        state='completed';
+    elseif isfield(publication,'status')&&strcmp(publication.status,'time_limit')
+        state='stopped';
+    end
     return
 end
 switch char(summary.status)
     case {'time_limit','stopped'}, state='stopped';
     case 'failed', state='failed';
     case 'iteration_limit'
-        if complete_publication(manifest,summary,root,prefix), state='completed'; end
+        if dsc_output_group_complete(root,prefix,manifest), state='completed'; end
 end
 end
 
@@ -98,46 +103,6 @@ if status==0&&~isempty(value)
 elseif status==1&&isempty(value)
     yes=false;
 end
-end
-
-function yes=complete_publication(manifest,summary,root,prefix)
-yes=false;
-if ~isfield(manifest,'config')
-    return
-end
-num_chains=1;
-if isfield(summary,'num_chains')&&isnumeric(summary.num_chains), num_chains=summary.num_chains; end
-if isfield(manifest,'outputs')
-    outputs=manifest.outputs;
-    if ~all(isfield(outputs,{'parameters','joint_draw_chunks'})), return; end
-    paths=[cellstr(string(outputs.parameters));cellstr(string(outputs.joint_draw_chunks(:)))];
-else
-    paths={fullfile(root,[prefix 'parameters.mat'])};
-    chunks=dir(fullfile(root,[prefix '*posterior_chunk_*.mat']));
-    if isempty(chunks), return; end
-    paths=[paths; fullfile({chunks.folder},{chunks.name})'];
-end
-create_pdf=config_option(manifest,'CreatePDF','create_pdf',true);
-% Publication metadata records whether this run actually requested figures;
-% config accepts both current public option names and historical cfg names.
-if isfield(manifest,'pdf')&&isstruct(manifest.pdf)&&isscalar(manifest.pdf)&& ...
-        isfield(manifest.pdf,'enabled')
-    create_pdf=manifest.pdf.enabled;
-end
-if create_pdf
-    paths{end+1}=fullfile(root,[prefix 'correlation_paths.pdf']);
-    if num_chains>1
-        paths{end+1}=fullfile(root,[prefix 'convergence_correlation_paths.pdf']);
-    end
-end
-for k=1:numel(paths)
-    path=char(java.io.File(paths{k}).getCanonicalPath());
-    [directory,name,extension]=fileparts(path);
-    if ~strcmp(directory,root)||~startsWith([name extension],prefix)||~isfile(path)
-        return
-    end
-end
-yes=true;
 end
 
 function protected=protect_sources(root,prefixes,manifests,protected)
