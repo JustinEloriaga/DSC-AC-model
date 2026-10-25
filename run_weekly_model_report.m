@@ -94,7 +94,7 @@ try
         inference.smoothing_panel,priors,cfg.correlation_backend);
     manifest=struct('equation','y_t = mu + D_t P_t^(1/2) z_t; z_t iid N(0,I)', ...
         'innovation_variances','sig2h governs h (delta) random walks; sig2r governs r (gamma) random walks', ...
-        'source_hash',panel.source_hash,'config',manifest_options);
+        'config',manifest_options);
     if ~inference.estimate_parameters
         manifest.inference=struct('parameter_file',inference.parameters.path);
     end
