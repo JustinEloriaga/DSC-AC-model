@@ -523,7 +523,11 @@ for k=1:size(patterns,1)
     ix=find(patterns(k,:)); dates=find(groups==k); n=numel(ix);
     if n==0, continue; end
     factors=cat(3,cache.L{dates});
-    directions(1:n,ix,dates)=pagemldivide(factors,eye(n));
+    if exist('pagemldivide','builtin') % R2022a+
+        directions(1:n,ix,dates)=pagemldivide(factors,eye(n));
+    else
+        for p=1:numel(dates), directions(1:n,ix,dates(p))=factors(:,:,p)\eye(n); end
+    end
 end
 z=E.*exp(-h/2); z(~mask)=0;
 u=pagemtimes(directions,reshape(z',m,1,T));

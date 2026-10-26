@@ -10,7 +10,7 @@ addpath(root,fullfile(root,'toolbox'),fullfile(root,'scripts'));
 prior_warning=warning('off','econ:adftest:InvalidStatistic');
 warning_guard=onCleanup(@()warning(prior_warning)); %#ok<NASGU>
 folder=tempname; mkdir(folder);
-testCase.addTeardown(@()rmdir(folder,'s'));
+testCase.addTeardown(@()remove_folder(folder));
 cfg=weekly_config(); header=readlines(cfg.source_file);
 % Run the fixed-output entry point from an isolated repository copy.
 prior_path=path;
@@ -87,4 +87,9 @@ verifyEqual(testCase,latest.inference.parameter_file,result.paths.parameters);
 verifyEqual(testCase,latest.actual_retained_draws_per_chain,2);
 verifyEqual(testCase,latest.run_result.saved_draws_total,2);
 verifyEqual(testCase,latest.run_result.status,loaded.status);
+end
+
+function remove_folder(folder)
+clear mex % Windows locks loaded MEX files in the copied toolbox.
+rmdir(folder,'s');
 end

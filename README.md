@@ -32,6 +32,31 @@ Verify the build with:
 This compilation is computer-specific. If the repository is copied to another
 computer, rebuild the MEX files there rather than copying the compiled files.
 
+## Windows (MATLAB R2021b + MinGW-w64)
+
+The model runs on Windows with MATLAB R2021b, the Econometrics Toolbox (which
+installs the Statistics and Machine Learning Toolbox it depends on), and
+optionally the "MATLAB Support for MinGW-w64 C/C++ Compiler" add-on.
+Parallel Computing Toolbox is not required; keep `ParallelChains=false`.
+
+Without MEX, pass a MATLAB backend:
+
+    result = run_weekly_model_report(..., CorrelationBackend="matlab");     % or "matlab_new"
+
+With MEX, build once from the repository root, then use `"mex"` (the default)
+or `"mex_new"`:
+
+    addpath("toolbox","build");
+    mex -setup C++        % choose MinGW64 Compiler (C++)
+    build_dsc_mex         % creates toolbox\*.mexw64
+
+Windows locks a loaded MEX file. If the build reports "Permission denied",
+run `clear mex` in every open MATLAB session, or close them, and rebuild.
+Keep the repository at a short path: run files add about 110 characters,
+and MATLAB cannot write past the 260-character Windows path limit.
+`BuildReport=true` is not supported on Windows: its shell commands assume a
+POSIX shell and `python3`.
+
 ## Run Model
 
 From the repository root in MATLAB:

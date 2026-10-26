@@ -194,7 +194,7 @@ for pos = 1:numel(indices)
         end
     end
     ylim(ax,[-1 1]); xlim(ax,[x(1) x(end)]);
-    clim(ax,[-1 1]);
+    ax.CLim=[-1 1]; % clim() requires R2022a.
     datetick(ax,'x','yyyy','keeplimits');
     ylabel(ax,'P_{ij,t}');
     title(ax,char(pair_labels(k)),'Interpreter','none','FontWeight','normal');
