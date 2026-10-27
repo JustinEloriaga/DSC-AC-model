@@ -81,7 +81,10 @@ The public options are:
 | `SourceFile` | Repository CSV | Market-level input file |
 | `VariableNames` | Four tickers listed above | Series to include, in model order |
 
-`ParallelChains=true` requires an existing MATLAB process pool. Sequential
+`ParallelChains=true` requires an existing MATLAB process pool. If the
+Parallel Computing Toolbox is not installed or licensed, the run warns and
+runs the same chains sequentially; draws are unchanged, only slower. The
+manifest then records `ParallelChains=false`. Sequential
 chains avoid creating MATLAB job directories. Retained targets are per chain;
 checkpoints retain the original chain identifiers, seeds and RNG states.
 Each invocation starts a fresh run and rejects an existing output prefix.

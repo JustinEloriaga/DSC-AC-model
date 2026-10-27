@@ -55,6 +55,65 @@ void correlation_error(const char* identifier, const char* message, mwSize t) {
                       std::to_string(t + 1) + ").");
 }
 
+// Cyclic Jacobi eigensolver for the small symmetric generators used here.
+// A (column-major n-by-n) is destroyed; V receives orthonormal eigenvector
+// columns and w the eigenvalues, both sorted ascending as dsyev returns them.
+// LAPACK call overhead dominates dsyev at these sizes. Returns false if the
+// off-diagonal mass fails to vanish, so the caller can fall back to dsyev.
+bool jacobi_eigen(double* A, double* V, double* w, mwSize n) {
+    const double eps = std::numeric_limits<double>::epsilon();
+    std::fill(V, V + n*n, 0.0);
+    for (mwSize i = 0; i < n; ++i) V[i + n*i] = 1.0;
+    bool converged = false;
+    for (int sweep = 0; sweep < 50; ++sweep) {
+        double off = 0.0, total = 0.0;
+        for (mwSize j = 0; j < n; ++j) {
+            total += A[j + n*j] * A[j + n*j];
+            for (mwSize i = j + 1; i < n; ++i) off += A[i + n*j] * A[i + n*j];
+        }
+        total += 2.0 * off;
+        if (off <= eps * eps * total) {
+            converged = true;
+            break;
+        }
+        for (mwSize p = 0; p + 1 < n; ++p) {
+            for (mwSize q = p + 1; q < n; ++q) {
+                const double apq = A[p + n*q];
+                if (apq == 0.0) continue;
+                const double theta = (A[q + n*q] - A[p + n*p]) / (2.0 * apq);
+                const double t = std::abs(theta) > 1e150 ? 0.5 / theta :
+                    (theta >= 0.0 ? 1.0 : -1.0) / (std::abs(theta) + std::sqrt(theta*theta + 1.0));
+                const double c = 1.0 / std::sqrt(t*t + 1.0), s = t * c;
+                for (mwSize k = 0; k < n; ++k) {
+                    const double akp = A[k + n*p], akq = A[k + n*q];
+                    A[k + n*p] = c*akp - s*akq;
+                    A[k + n*q] = s*akp + c*akq;
+                }
+                for (mwSize k = 0; k < n; ++k) {
+                    const double apk = A[p + n*k], aqk = A[q + n*k];
+                    A[p + n*k] = c*apk - s*aqk;
+                    A[q + n*k] = s*apk + c*aqk;
+                    const double vkp = V[k + n*p], vkq = V[k + n*q];
+                    V[k + n*p] = c*vkp - s*vkq;
+                    V[k + n*q] = s*vkp + c*vkq;
+                }
+                A[p + n*q] = 0.0;
+                A[q + n*p] = 0.0;
+            }
+        }
+    }
+    if (!converged) return false;
+    for (mwSize i = 0; i < n; ++i) w[i] = A[i + n*i];
+    for (mwSize i = 0; i + 1 < n; ++i) {
+        mwSize smallest = i;
+        for (mwSize k = i + 1; k < n; ++k) if (w[k] < w[smallest]) smallest = k;
+        if (smallest == i) continue;
+        std::swap(w[i], w[smallest]);
+        for (mwSize k = 0; k < n; ++k) std::swap(V[k + n*i], V[k + n*smallest]);
+    }
+    return true;
+}
+
 bool real_full_double(const mxArray* value) {
     return mxIsDouble(value) && !mxIsComplex(value) && !mxIsSparse(value) &&
            mxGetNumberOfDimensions(value) == 2;
@@ -157,7 +216,7 @@ void evaluate(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
     const ptrdiff_t increment = 1;
     ptrdiff_t info = 0;
     std::vector<double> base(mm, 0.0), eigenvectors(mm), eigenvalues(m),
-        exp_eigenvalues(m), diagonal(m, 0.0), C(mm), factor(mm), z(m),
+        exp_eigenvalues(m), diagonal(m, 0.0), C(mm), factor(mm), z(m), generator(mm),
         ell(m), exp_diagonal(m), jacobian(mm), step(m), pair_product(m);
     std::vector<mwSize> observed(m);
     double optimal_workspace = 0.0;
@@ -187,12 +246,17 @@ void evaluate(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
         // dates reuse the preceding solved diagonal. With guesses, every date
         // starts from its corresponding accepted-state diagonal.
         auto log_diagonal_residual = [&]() {
-            std::copy(base.begin(), base.end(), eigenvectors.begin());
-            for (mwSize i = 0; i < m; ++i) eigenvectors[i + m*i] = diagonal[i];
-            dsyev(&vectors, &lower, &n, eigenvectors.data(), &n,
-                  eigenvalues.data(), work.data(), &lwork, &info);
-            if (info != 0) {
-                correlation_error("dsc:CorrelationNumerical", "Symmetric eigensolver failed", t);
+            std::copy(base.begin(), base.end(), generator.begin());
+            for (mwSize i = 0; i < m; ++i) generator[i + m*i] = diagonal[i];
+            if (m > 8 || !jacobi_eigen(generator.data(), eigenvectors.data(),
+                                       eigenvalues.data(), m)) {
+                std::copy(base.begin(), base.end(), eigenvectors.begin());
+                for (mwSize i = 0; i < m; ++i) eigenvectors[i + m*i] = diagonal[i];
+                dsyev(&vectors, &lower, &n, eigenvectors.data(), &n,
+                      eigenvalues.data(), work.data(), &lwork, &info);
+                if (info != 0) {
+                    correlation_error("dsc:CorrelationNumerical", "Symmetric eigensolver failed", t);
+                }
             }
             // Exact minimization in the scalar-identity direction: enforce
             // trace(exp(A))=m without another eigendecomposition. Evaluate

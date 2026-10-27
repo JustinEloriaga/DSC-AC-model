@@ -82,7 +82,7 @@ else
         cfg.fixed_parameters=validate_fixed_parameters(cfg.fixed_parameters,m,nr);
     end
 end
-if ~isfield(cfg,'correlation_backend'), cfg.correlation_backend='mex'; end
+if ~isfield(cfg,'correlation_backend'), cfg.correlation_backend='mex_new'; end
 if ~isfield(cfg,'correlation_threads'), cfg.correlation_threads='auto'; end
 % A direct sampler/pilot call runs one chain. Coordinated parallel chains
 % arrive with their numeric allocation already resolved on the client.
@@ -96,7 +96,9 @@ if ~isscalar(cfg.correlation_threads)||~isfinite(cfg.correlation_threads)|| ...
 end
 cfg.correlation_backend=validatestring(cfg.correlation_backend,{'auto','matlab','mex','matlab_new','mex_new'});
 if strcmp(cfg.correlation_backend,'auto')
-    if exist('dsc_corr_batch_mex','file')==3
+    if exist('dsc_corr_batch_mex_new','file')==3
+        cfg.correlation_backend='mex_new';
+    elseif exist('dsc_corr_batch_mex','file')==3
         cfg.correlation_backend='mex';
     else
         cfg.correlation_backend='matlab';
@@ -239,7 +241,7 @@ while completed<cfg.max_iterations&&~(isfield(cfg,'resume_finalize_only')&&cfg.r
         timing.correlation=timing.correlation+toc(stage);
         if cfg.estimate_parameters
             stage_name='correlation_variance'; stage=tic;
-            state.sig2r=draw_variances(state.r,state.sig2r,priors.mr0, ...
+            state.sig2r=draw_variances(state.r,priors.mr0, ...
                 priors.r0_scale,priors.ig_shape,prior_scale_r);
             timing.correlation_variance=timing.correlation_variance+toc(stage);
         end
@@ -262,7 +264,7 @@ while completed<cfg.max_iterations&&~(isfield(cfg,'resume_finalize_only')&&cfg.r
         timing.volatility=timing.volatility+toc(stage);
         if cfg.estimate_parameters
             stage_name='volatility_variance'; stage=tic;
-            state.sig2h=draw_variances(state.h,state.sig2h,priors.mh0, ...
+            state.sig2h=draw_variances(state.h,priors.mh0, ...
                 priors.h0_scale,priors.ig_shape,prior_scale_h);
             timing.volatility_variance=timing.volatility_variance+toc(stage);
         end
@@ -647,14 +649,15 @@ end
 error('dsc:SliceLimit','Elliptical slice update exceeded 1000 proposals.');
 end
 
-function s=draw_variances(path,s,mu,c,shape,scale)
-T=size(path,1); changes=diff(path,1,1); posterior_shape=(T-1)/2+shape;
+function s=draw_variances(path,mu,c,shape,scale)
+% Exact conjugate draw: the initial state's variance (c+1)*s is also
+% inverse-gamma in s, so all T path terms enter the posterior directly.
+T=size(path,1); changes=diff(path,1,1); posterior_shape=T/2+shape;
+s=zeros(1,size(path,2));
 for j=1:size(path,2)
-    posterior_scale=sum(changes(:,j).^2)/2+scale(j);
-    proposal=1/gamrnd(posterior_shape,1/posterior_scale);
     d=path(1,j)-mu(j);
-    logratio=-.5*log(proposal/s(j))-.5*d*d/(c+1)*(1/proposal-1/s(j));
-    if log(rand)<logratio, s(j)=proposal; end
+    posterior_scale=sum(changes(:,j).^2)/2+d*d/(2*(c+1))+scale(j);
+    s(j)=1/gamrnd(posterior_shape,1/posterior_scale);
 end
 end
 

@@ -71,6 +71,16 @@ if ~isempty(dir(fullfile(cfg.parameter_dir, ...
     error('DSC:ExistingRunPrefix','Generated run prefix already exists; retry the run.');
 end
 if cfg.parallel_chains
+    % Each chain's seed and draws do not depend on scheduling, so a missing
+    % toolbox only costs wall-clock time; run the same chains sequentially.
+    [available,reason]=dsc_parallel_available();
+    if ~available
+        warning('DSC:ParallelUnavailable','%s Running the %d chains sequentially instead.', ...
+            reason,cfg.num_chains);
+        cfg.parallel_chains=false; options.ParallelChains=false;
+    end
+end
+if cfg.parallel_chains
     existing=gcp('nocreate');
     assert(~isempty(existing),'DSC:ParallelPool', ...
         'ParallelChains requires an existing process pool; starting one creates job directories. Use sequential chains or start the pool explicitly.');
