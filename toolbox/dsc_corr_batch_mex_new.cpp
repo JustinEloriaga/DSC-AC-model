@@ -14,7 +14,9 @@
 // P and L: m-by-m-by-T. L contains each observed-space lower Cholesky
 // factor in its leading nobs-by-nobs block; all other entries are zero.
 // ll excludes Gaussian constants and log-volatility contributions.
-// Optional std::thread workers process static contiguous date blocks;
+// Optional std::thread workers claim fixed 16-date blocks from a shared
+// counter, so a descheduled worker delays only its current block; results
+// do not depend on the thread count or on which worker solves a block;
 // LAPACK/BLAS thread settings and MATLAB global state are never changed.
 #include "mex.h"
 #include "lapack.h"
@@ -29,9 +31,13 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <atomic>
 #include <vector>
 
 namespace {
+// Dates per dynamically claimed block; block boundaries never depend on threads.
+constexpr mwSize kDateBlock = 16;
+
 struct KernelError : std::runtime_error {
     const char* identifier;
     KernelError(const char* id, const std::string& message)
@@ -210,7 +216,9 @@ void evaluate(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
     if (input_guess) initial_diagonal.assign(input_guess, input_guess + T*m);
     std::vector<double> date_likelihood(T, 0.0);
 
-    auto process_dates = [&](mwSize begin_date, mwSize end_date) {
+    std::atomic<mwSize> next_block(0);
+    std::atomic<bool> stop(false);
+    auto process_blocks = [&]() {
     const ptrdiff_t n = static_cast<ptrdiff_t>(m);
     const char vectors = 'V', lower = 'L', no_transpose = 'N', nonunit = 'N';
     const ptrdiff_t increment = 1;
@@ -231,6 +239,12 @@ void evaluate(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
     std::vector<double> work(static_cast<std::size_t>(lwork));
     const double tolerance = 1e-8 * std::sqrt(static_cast<double>(m));
 
+    for (;;) {
+    if (stop.load(std::memory_order_relaxed)) return;
+    const mwSize begin_date = next_block.fetch_add(1) * kDateBlock;
+    if (begin_date >= T) return;
+    const mwSize end_date = std::min(T, begin_date + kDateBlock);
+    if (!input_guess) std::fill(diagonal.begin(), diagonal.end(), 0.0);
     for (mwSize t = begin_date; t < end_date; ++t) {
         if (input_guess) {
             for (mwSize i = 0; i < m; ++i) diagonal[i] = initial_diagonal[t + T*i];
@@ -242,8 +256,8 @@ void evaluate(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
                 base[j + m*i] = base[i + m*j];
             }
         }
-        // Without explicit guesses, each block starts at zero and subsequent
-        // dates reuse the preceding solved diagonal. With guesses, every date
+        // Without explicit guesses, each 16-date block starts at zero and
+        // subsequent dates reuse the preceding solved diagonal. With guesses, every date
         // starts from its corresponding accepted-state diagonal.
         auto log_diagonal_residual = [&]() {
             std::copy(base.begin(), base.end(), generator.begin());
@@ -417,21 +431,20 @@ void evaluate(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
         }
         if (logdet_out) logdet_out[t] = logdet;
     }
+    }
     };
 
-    const mwSize worker_count = std::min(requested_threads, T);
+    const mwSize worker_count = std::min(requested_threads, (T + kDateBlock - 1) / kDateBlock);
     if (worker_count == 1) {
-        process_dates(0, T);
+        process_blocks();
     } else {
         std::vector<std::exception_ptr> failures(worker_count);
         auto run_worker = [&](mwSize worker) {
             try {
-                const mwSize base_length = T / worker_count;
-                const mwSize remainder = T % worker_count;
-                const mwSize first = worker * base_length + std::min(worker, remainder);
-                process_dates(first, first + base_length + (worker < remainder ? 1 : 0));
+                process_blocks();
             } catch (...) {
                 failures[worker] = std::current_exception();
+                stop.store(true, std::memory_order_relaxed);
             }
         };
         {
@@ -445,8 +458,8 @@ void evaluate(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
         }
         for (const auto& failure : failures) if (failure) std::rethrow_exception(failure);
     }
-    // Fixed date-order reduction is deterministic for a fixed thread count,
-    // regardless of worker scheduling. Repeated calls do not retain state.
+    // Fixed date-order reduction is deterministic for any thread count
+    // and worker scheduling. Repeated calls do not retain state.
     double ll = 0.0;
     for (mwSize t = 0; t < T; ++t) ll += date_likelihood[t];
     if (!std::isfinite(ll)) ll = -mxGetInf();
